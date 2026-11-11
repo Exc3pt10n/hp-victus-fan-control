@@ -202,6 +202,17 @@ victus-fan selftest --apply
 Funktioniert danach immer noch etwas nicht, schick mir bitte die Zeile **„Rohdaten“** am Ende
 der Testausgabe.
 
+## Temperaturquelle prüfen
+
+Windows bietet mehrere Temperaturquellen, die unterschiedlich gut zur CPU passen: den
+HP-BIOS-Sensor, ACPI-Thermalzonen (oft kaum aktualisiert), dieselben Zonen über die
+Windows-Leistungsindikatoren und – falls installiert – LibreHardwareMonitor bzw.
+OpenHardwareMonitor mit der echten CPU-Package-Temperatur.
+
+**Temperatursensoren testen** im Tray-Menü (oder als Administrator `victus-fan sensors --apply`)
+listet alle Quellen auf, erzeugt 20 Sekunden volle CPU-Last und übernimmt die Quelle, die am
+schnellsten und deutlichsten reagiert, als `[windows] cpu_sensor`.
+
 ## Erster Test – bitte einmal durchführen
 
 Ich konnte die Steuerung nicht auf echter Victus-Hardware testen. Die BIOS-Befehle

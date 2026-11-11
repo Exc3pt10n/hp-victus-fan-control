@@ -70,6 +70,9 @@ DEFAULTS: dict = {
         # "" (nicht ändern), "default", "performance" oder "cool".
         # Manche BIOS setzen feste Drehzahlen nur im Modus "performance" um.
         "fan_mode": "",
+        # Quelle der CPU-Temperatur: "auto" (HP-BIOS, sonst ACPI) oder eine id aus
+        # "victus-fan sensors" (z. B. "perf:\\_TZ.CPUZ" oder "lhm:/amdcpu/0/temperature/2").
+        "cpu_sensor": "auto",
         # Kleinste Stufe > 0, die das BIOS wirklich umsetzt (0 = keine Grenze).
         "min_level": 0,
         # Maximale Lüfterstufe in 100 U/min (55 = 5500 U/min).

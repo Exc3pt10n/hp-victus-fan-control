@@ -106,6 +106,9 @@ class WindowsBackend(FanBackend):
         self._max_active: bool | None = None
         self._probed: bool | None = None
         self._fan_mode: str = ""
+        self._cpu_sensor_id = "auto"
+        self._cpu_sensor = None
+        self._sensors: dict | None = None
         self.reconfigure(settings)
 
     def reconfigure(self, settings: dict) -> None:
@@ -114,6 +117,20 @@ class WindowsBackend(FanBackend):
         self.max_gpu = int(settings["max_level_gpu"])
         self.min_level = int(settings.get("min_level", 0))
         self.keepalive = float(settings["keepalive"])
+        sensor_id = settings.get("cpu_sensor", "auto") or "auto"
+        if sensor_id != self._cpu_sensor_id:
+            self._cpu_sensor_id = sensor_id
+            self._cpu_sensor = None
+            if sensor_id != "auto":
+                from ..sensors import discover
+
+                if self._sensors is None:
+                    self._sensors = discover(self.bios)
+                self._cpu_sensor = self._sensors.get(sensor_id)
+                if self._cpu_sensor is None:
+                    log.warning("CPU-Sensor '%s' nicht gefunden - nutze automatische Auswahl", sensor_id)
+                else:
+                    log.info("CPU-Temperatur von: %s", self._cpu_sensor.label)
         fan_mode = settings.get("fan_mode", "") or ""
         if fan_mode != self._fan_mode:
             if fan_mode:
@@ -147,6 +164,10 @@ class WindowsBackend(FanBackend):
             return False
 
     def read_cpu_temp(self) -> float | None:
+        if self._cpu_sensor is not None:
+            value = self._cpu_sensor.read()
+            if value is not None:
+                return value
         try:
             t = self.bios.call(GET_TEMP, [0x01])[0]
             if 0 < t < 120:
@@ -240,5 +261,6 @@ class WindowsBackend(FanBackend):
     def describe(self) -> dict:
         info = super().describe()
         info.update(fan_mode=self._fan_mode or "(unverändert)", min_level=self.min_level,
+                    cpu_sensor=self._cpu_sensor.label if self._cpu_sensor else "auto (BIOS, sonst ACPI)",
                     max_level_cpu=self.max_cpu, max_level_gpu=self.max_gpu, keepalive=self.keepalive)
         return info

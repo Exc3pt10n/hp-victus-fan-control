@@ -133,19 +133,23 @@ def open_file(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
-def run_selftest(config_path: Path) -> None:
-    """Startet den Hardware-Test in einem sichtbaren Konsolenfenster als Administrator."""
+def run_elevated_console(config_path: Path, command: str) -> None:
+    """Startet einen victus-fan-Befehl in einem sichtbaren Konsolenfenster als Administrator."""
     if sys.platform != "win32":
-        raise OSError("Bitte im Terminal ausführen: sudo victus-fan selftest --apply")
+        raise OSError(f"Bitte im Terminal ausführen: sudo victus-fan {command}")
     import ctypes
 
     exe = Path(sys.executable)
     if exe.name.lower() == "pythonw.exe":
         exe = exe.with_name("python.exe")
-    params = f'-m victus_fan -c "{config_path}" selftest --apply --wait'
+    params = f'-m victus_fan -c "{config_path}" {command}'
     rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(exe), params, None, 1)  # type: ignore[attr-defined]
     if rc <= 32:
-        raise OSError("Hardware-Test abgebrochen oder konnte nicht gestartet werden")
+        raise OSError("Abgebrochen oder konnte nicht gestartet werden")
+
+
+def run_selftest(config_path: Path) -> None:
+    run_elevated_console(config_path, "selftest --apply --wait")
 
 
 def start_update_check() -> None:
@@ -487,6 +491,7 @@ class App:
             pystray.MenuItem("Log öffnen", call(self.open_log)),
             pystray.MenuItem("Dienst neu starten", call(self.restart)),
             pystray.MenuItem("Hardware-Test …", call(self.selftest)),
+            pystray.MenuItem("Temperatursensoren testen …", call(self.sensor_test)),
             pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Tray-Icon beenden", call(self.quit)),
@@ -539,6 +544,19 @@ class App:
             run_selftest(self.config_path)
         except OSError as exc:
             messagebox.showwarning("Hardware-Test", str(exc))
+
+    def sensor_test(self) -> None:
+        if not messagebox.askokcancel(
+                "Temperatursensoren testen",
+                "Der Test listet alle Temperaturquellen auf und erzeugt dann etwa 20 Sekunden "
+                "volle CPU-Last, um zu sehen, welcher Sensor die CPU am besten abbildet.\n\n"
+                "Der beste Sensor wird automatisch übernommen.\n"
+                "Bitte die Administrator-Abfrage bestätigen."):
+            return
+        try:
+            run_elevated_console(self.config_path, "sensors --apply --wait")
+        except OSError as exc:
+            messagebox.showwarning("Temperatursensoren", str(exc))
 
     def _show_warning(self, text: str | None) -> None:
         if text:

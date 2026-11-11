@@ -214,6 +214,52 @@ def cmd_update(args) -> int:
     return 1 if status.get("state") == "error" else 0
 
 
+def cmd_sensors(args) -> int:
+    import json as _json
+
+    from . import sensors
+    from .config import update_config_values
+
+    def finish(code: int) -> int:
+        if args.wait:
+            input("\nEnter zum Schließen ...")
+        return code
+
+    bios = None
+    if sys.platform == "win32":
+        try:
+            from .backends.windows import HpBios
+            bios = HpBios()
+        except Exception as exc:  # noqa: BLE001
+            print(f"Hinweis: HP-BIOS nicht erreichbar ({exc}) - für BIOS-Sensoren als Administrator starten.")
+
+    print("Suche Temperaturquellen ...")
+    found = sensors.discover(bios)
+    if not found:
+        print("Keine Temperaturquelle gefunden.")
+        return finish(1)
+    for s in found.values():
+        print(f"  {s.label:<55} {s.read()} °C")
+
+    if args.no_load:
+        return finish(0)
+    print("\nJetzt wird etwa 30 Sekunden lang gemessen, davon 20 s mit voller CPU-Last.")
+    print("Bitte währenddessen nichts anderes Rechenintensives starten.\n")
+    results = sensors.measure(found, load=args.load)
+    best = sensors.recommend(results)
+    sensors.report(results, best)
+    print("\nRohdaten (zum Kopieren):")
+    print(_json.dumps(results, ensure_ascii=False))
+
+    if best and args.apply:
+        update_config_values(args.config, "windows", {"cpu_sensor": best["id"]},
+                             note="von 'victus-fan sensors' gewählt")
+        print(f"\nIn {args.config} als CPU-Quelle gespeichert - der Dienst übernimmt sie sofort.")
+    elif best:
+        print("Übernehmen mit: victus-fan sensors --apply")
+    return finish(0)
+
+
 def cmd_curve(args) -> int:
     cfg = load_config(args.config)
     profile = cfg.profile(args.name or cfg.general["profile"])
@@ -290,6 +336,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force", action="store_true", help="auch ohne neue Version neu installieren")
     p.add_argument("--auto", action="store_true", help="für die geplante Aufgabe: beachtet [update] enabled")
     p.set_defaults(func=cmd_update)
+
+    p = sub.add_parser("sensors", help="Temperaturquellen auflisten und unter CPU-Last vergleichen")
+    p.add_argument("--no-load", action="store_true", help="nur auflisten, keine Lastmessung")
+    p.add_argument("--load", type=float, default=20.0, help="Dauer der CPU-Last in Sekunden")
+    p.add_argument("--apply", action="store_true", help="beste Quelle als CPU-Sensor speichern")
+    p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
+    p.set_defaults(func=cmd_sensors)
 
     p = sub.add_parser("curve", help="Lüfterkurve eines Profils anzeigen")
     p.add_argument("name", nargs="?")
