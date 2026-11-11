@@ -1,0 +1,16 @@
+[Unit]
+Description=Intelligente Lüftersteuerung für HP Victus
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStartPre=-/sbin/modprobe hp-wmi
+ExecStart=/opt/victus-fan/venv/bin/python -m victus_fan run
+ExecStopPost=/opt/victus-fan/venv/bin/python -m victus_fan restore
+RuntimeDirectory=victus-fan
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

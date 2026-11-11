@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "victus-fan"
+version = "1.0.0"
+description = "Intelligente Lüftersteuerung für HP-Victus-Notebooks (Windows 11 / Linux)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["pywin32>=306; sys_platform == 'win32'"]
+
+[project.scripts]
+victus-fan = "victus_fan.cli:main"
+
+[tool.setuptools]
+packages = ["victus_fan", "victus_fan.backends"]
