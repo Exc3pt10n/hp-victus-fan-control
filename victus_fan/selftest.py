@@ -17,8 +17,9 @@ from .state import read_override, read_status, write_override
 MIN_DIFF_RPM = 700
 
 
-# Reihenfolge = Vorzug: "cool" erhöht die Leistungsaufnahme nicht, "performance" schon.
-TEST_FAN_MODES = ("cool", "performance")
+# Reihenfolge = Vorzug: "default" und "cool" erhöhen die Leistungsaufnahme nicht,
+# "performance" schon.
+TEST_FAN_MODES = ("default", "cool", "performance")
 LOW_TEST_LEVEL = 11  # ca. 1100 U/min - entspricht etwa der Anlaufdrehzahl der Profile
 
 
@@ -137,7 +138,13 @@ def run(backend, settle: float = 15.0, say=print, extended: bool = True) -> Resu
         rec["fan_mode"] = r.best_fan_mode
     elif r.max_works:
         rec["mode"] = "toggle"
-    if r.fan_modes and not r.level_works and not r.best_fan_mode:
+    if r.fan_modes and r.level_works:
+        # Feste Drehzahlen wirkten schon vor dem Modus-Test - das kann aber daran
+        # liegen, dass vorher bereits ein Modus gesetzt war (nach dem Systemstart
+        # ignoriert das BIOS sie ggf.). "default" einmal zu setzen schaltet sie
+        # zuverlässig frei, ohne die Leistungsaufnahme zu ändern.
+        rec["fan_mode"] = "default"
+    elif r.fan_modes and not r.best_fan_mode:
         rec["fan_mode"] = ""
     if r.max_works and len(r.max_on) >= 2 and has_levels:
         rec["max_level_cpu"] = max(1, r.max_on[0] // 100)

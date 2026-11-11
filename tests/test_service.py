@@ -44,7 +44,7 @@ class ServiceTest(unittest.TestCase):
         s = FanService(Config(), b)
         with mock.patch("victus_fan.service.time.monotonic", side_effect=[0, 2, 70]):
             s.step(); s.step(); s.step()
-        self.assertEqual(b.calls, [("level", 0), ("level", 0)])  # Start + Keepalive
+        self.assertEqual(b.calls, [("level", 20), ("level", 20)])  # Start + Keepalive
 
     def test_toggle_mode_uses_max(self):
         b = FakeBackend(level=False)
@@ -149,6 +149,28 @@ class ConfigUpdateTest(unittest.TestCase):
             self.assertIn("# Eigene Kurven", p.read_text(encoding="utf-8"))
             update_config_values(p, "neu", {"x": 1})
             self.assertIn("[neu]", p.read_text(encoding="utf-8"))
+
+
+class EscalationTest(unittest.TestCase):
+    def test_tries_next_fan_mode_and_saves_it(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = Path(d) / "config.toml"
+            cfg_path.write_text("[windows]\nmode = \"level\"\n", encoding="utf-8")
+            b = FakeBackend(level=True)
+            b.temp = 65.0
+            b.read_fan_rpm = lambda: [2700, 0]           # Lüfter ignorieren die Vorgabe
+            b.expected_rpm = lambda p: [int(55 * p), int(57 * p)]
+            b.modes = []
+            b.set_fan_mode = lambda name: b.modes.append(name)
+            b.reconfigure = lambda settings: b.set_fan_mode(settings["fan_mode"])
+            s = FanService(load_config(cfg_path), b)
+            with mock.patch("victus_fan.service.time.monotonic", side_effect=list(range(0, 400, 2))):
+                for _ in range(0, 400, 2):
+                    status = s.step()
+            self.assertEqual(b.modes, ["default", "cool", "performance"])
+            self.assertIsNotNone(status["warning"])        # alle probiert -> Warnung
+            self.assertEqual(load_config(cfg_path).windows["fan_mode"], "performance")
 
 
 if __name__ == "__main__":

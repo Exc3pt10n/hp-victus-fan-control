@@ -26,4 +26,5 @@ INSTALL_INFO = INSTALL_DIR / "installed.json"
 # Vom Updater geschrieben: Ergebnis der letzten Prüfung
 UPDATE_STATUS = DATA_DIR / "update_status.json"
 UPDATE_LOG = DATA_DIR / "update.log"
+UPDATE_INSTALL_LOG = DATA_DIR / "update-install.log"
 UPDATE_TASK = "VictusFanUpdate"

@@ -162,9 +162,22 @@ UPDATE_TEXT = {
 }
 
 
-def update_summary(status: dict) -> tuple[str, str]:
+def update_summary(status: dict, installed: dict | None = None) -> tuple[str, str]:
     """Kurztext + Farbe für den Update-Status."""
+    installed = installed or {}
     state = status.get("state")
+    if state == "installing":
+        if status.get("latest_sha") and status.get("latest_sha") == installed.get("sha"):
+            # Installation fertig, der Updater konnte es nur nicht mehr eintragen.
+            state = "updated"
+            status = dict(status, updated_at=installed.get("installed_at", ""))
+        else:
+            try:
+                started = time.mktime(time.strptime(status.get("checked_at", ""), "%Y-%m-%d %H:%M"))
+            except ValueError:
+                started = None
+            if started is not None and time.time() - started > 45 * 60:
+                return f"Update hängt seit {status['checked_at']} – siehe update.log", WARN
     if not state:
         return "Noch nicht nach Updates gesucht", MUTED
     text = UPDATE_TEXT.get(state, state)
@@ -654,7 +667,7 @@ class App:
         info = read_installed()
         sha = (info.get("sha") or "")[:7]
         self.version_label.config(text=f"v{__version__}" + (f" ({sha})" if sha else ""))
-        text, color = update_summary(read_json(paths.UPDATE_STATUS))
+        text, color = update_summary(read_json(paths.UPDATE_STATUS), info)
         self.update_label.config(text="· " + text, fg=color)
 
     def _update_tray(self, temp, mode, running, tip) -> None:

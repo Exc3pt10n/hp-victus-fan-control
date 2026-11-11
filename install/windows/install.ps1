@@ -227,17 +227,23 @@ try {
     $serviceRegistered = $true
 
     # --- Geplante Aufgabe: Auto-Update -----------------------------------
-    Step "Richte Auto-Update '$UpdateTask' ein"
-    $updAction  = New-ScheduledTaskAction -Execute $venvPythonw -Argument "-m victus_fan update --auto" -WorkingDirectory $InstallDir
-    $atStartup  = New-ScheduledTaskTrigger -AtStartup
-    $atStartup.Delay = "PT10M"
-    $repeat     = New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(6) -RepetitionInterval (New-TimeSpan -Hours 6)
-    $updSettings = New-ScheduledTaskSettingsSet `
-        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable `
-        -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
-    Register-ScheduledTask -TaskName $UpdateTask -Action $updAction -Trigger @($atStartup, $repeat) `
-        -Principal $taskPrincipal -Settings $updSettings -Force `
-        -Description "Sucht nach Updates der Victus-Lüftersteuerung und installiert sie" | Out-Null
+    # Nicht neu registrieren, während der Updater selbst läuft (-Unattended):
+    # das könnte die laufende Update-Aufgabe beenden.
+    if ($Unattended -and (Get-ScheduledTask -TaskName $UpdateTask -ErrorAction SilentlyContinue)) {
+        Write-Host "Auto-Update-Aufgabe vorhanden - bleibt unverändert"
+    } else {
+        Step "Richte Auto-Update '$UpdateTask' ein"
+        $updAction  = New-ScheduledTaskAction -Execute $venvPythonw -Argument "-m victus_fan update --auto" -WorkingDirectory $InstallDir
+        $atStartup  = New-ScheduledTaskTrigger -AtStartup
+        $atStartup.Delay = "PT10M"
+        $repeat     = New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(6) -RepetitionInterval (New-TimeSpan -Hours 6)
+        $updSettings = New-ScheduledTaskSettingsSet `
+            -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable `
+            -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+        Register-ScheduledTask -TaskName $UpdateTask -Action $updAction -Trigger @($atStartup, $repeat) `
+            -Principal $taskPrincipal -Settings $updSettings -Force `
+            -Description "Sucht nach Updates der Victus-Lüftersteuerung und installiert sie" | Out-Null
+    }
 
     # --- Installierten Stand merken (Updater + Tray-Neustart) ------------
     $version = Get-NativeOutput $venvPython @("-c", "import victus_fan; print(victus_fan.__version__)")

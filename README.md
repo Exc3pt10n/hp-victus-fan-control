@@ -65,7 +65,8 @@ victus-fan update --check
 | `check_only = true` | Nur anzeigen, dass es ein Update gibt, nicht installieren |
 | `branch = "..."` | Anderen Branch verfolgen (leer = Standard-Branch) |
 
-Log der Updates: `C:\ProgramData\VictusFan\update.log`
+Log der Updates: `C:\ProgramData\VictusFan\update.log`, Ausgabe des Installers:
+`update-install.log` im selben Ordner.
 
 > **Wichtig:** Das Update läuft mit SYSTEM-Rechten und installiert, was auf dem verfolgten
 > Branch liegt. Wer in das Repository pushen darf, kann damit Code auf deinem Notebook
@@ -88,6 +89,15 @@ Fährt man mit der Maus darüber, zeigt der Tooltip CPU, GPU und Lüfter einzeln
 - **Rechtsklick** öffnet das Menü: Profil, Modus, Konfiguration, Log, Dienst neu starten.
 - Das Tray-Icon startet bei jeder Anmeldung automatisch; außerdem gibt es einen Eintrag
   **Victus Lüftersteuerung** im Startmenü.
+
+Die Profile sind auf die gemessenen Drehzahlen des Victus BV8D4EA abgestimmt
+(20 % ≈ 1100 U/min, leiser als die BIOS-Automatik im Leerlauf; 100 % ≈ 5400 U/min):
+
+| Profil | Verhalten |
+|---|---|
+| **Leise** | Lüfter stehen unter 50 °C still, danach sanfter Anstieg (Standard im Akkubetrieb) |
+| **Ausgewogen** | Mindestens 20 %, steigt ab 50 °C (Standard im Netzbetrieb) |
+| **Leistung** | Mindestens 30 %, steigt früher und steiler |
 
 | Modus | Bedeutung |
 |---|---|
@@ -147,14 +157,19 @@ zwei Minuten, was dein Gerät wirklich kann:
 1. Drehzahl in der BIOS-Automatik messen
 2. Max-Lüfter einschalten und messen (ergibt auch die echte Maximaldrehzahl)
 3. Feste Drehzahl hoch und niedrig vorgeben und messen
-4. In den BIOS-Leistungsmodi `cool` und `performance` jeweils prüfen, ob feste Drehzahlen
-   wirken – manche BIOS (z. B. beim Victus BV8D4EA) setzen sie nur dort um. `cool` wird
-   bevorzugt, weil `performance` auch mehr Leistungsaufnahme (= mehr Wärme) erlaubt.
+4. In den BIOS-Leistungsmodi `default`, `cool` und `performance` jeweils prüfen, ob feste
+   Drehzahlen wirken. Beim Victus BV8D4EA ignoriert das BIOS sie direkt nach dem
+   Systemstart, setzt sie aber um, sobald einmal ein Leistungsmodus gesetzt wurde –
+   `default` genügt dafür und verändert die Leistungsaufnahme nicht (`performance` erlaubt
+   mehr Leistung = mehr Wärme).
 5. Niedrige Stufen prüfen: Hebt das BIOS sie an (`min_level`) und stehen die Lüfter bei 0 still?
 
 Danach wird der BIOS-Leistungsmodus auf `default` zurückgesetzt; die Steuerung setzt den
 ermittelten Modus selbst, solange sie läuft. Im Modus **Pause** und beim Beenden stellt sie
 ihn wieder auf Standard.
+
+Folgen die Lüfter im Betrieb trotzdem einmal nicht, probiert die Steuerung selbst den
+nächsten Modus (`default` → `cool` → `performance`) und merkt sich den funktionierenden.
 
 Das Ergebnis wird automatisch in die `config.toml` übernommen (`[windows] mode` und
 Maximalstufen), der Dienst stellt sich ohne Neustart darauf ein. Ignoriert das BIOS feste

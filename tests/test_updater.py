@@ -86,6 +86,15 @@ class UpdaterTest(unittest.TestCase):
             status = updater.check_and_update(CFG)
         self.assertEqual(status["state"], "error")
 
+    def test_interrupted_install_is_recognised(self):
+        self.installed("b" * 40)
+        paths.UPDATE_STATUS.write_text(json.dumps({"state": "installing", "latest_sha": "b" * 40,
+                                                   "latest_message": "Neue Funktion"}), encoding="utf-8")
+        with mock.patch.object(updater, "_get", fake_get(sha="b" * 40)):
+            status = updater.check_and_update(CFG)
+        self.assertEqual(status["state"], "current")
+        self.assertNotEqual(status.get("updated_at"), None)
+
 
 def make_zip(entries):
     buf = io.BytesIO()

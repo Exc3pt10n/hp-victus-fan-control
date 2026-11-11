@@ -1,6 +1,6 @@
 import unittest
 
-from victus_fan.config import DEFAULTS, Config, load_config
+from victus_fan.config import DEFAULTS, Config, Profile, load_config
 from victus_fan.controller import FanController, Reading, ToggleAdapter, interpolate
 
 
@@ -21,7 +21,12 @@ class InterpolateTest(unittest.TestCase):
 
 class ControllerTest(unittest.TestCase):
     def setUp(self):
-        self.profile = Config().profile("balanced")
+        # Feste Testkurve - unabhängig von den Standardprofilen.
+        self.profile = Profile(
+            name="test",
+            cpu_curve=[(0, 0), (48, 0), (55, 25), (65, 45), (75, 70), (85, 100)],
+            gpu_curve=[(0, 0), (45, 0), (52, 25), (62, 45), (72, 70), (82, 100)],
+        )
 
     def test_first_reading_jumps_to_demand(self):
         c = make()
@@ -107,6 +112,14 @@ class ConfigTest(unittest.TestCase):
         cfg = load_config("config.example.toml")
         self.assertEqual(cfg.general["profile"], "balanced")
         self.assertIn("quiet", cfg.raw["profiles"])
+
+    def test_default_profiles_never_stop_fans_when_warm(self):
+        cfg = Config()
+        for name in cfg.raw["profiles"]:
+            p = cfg.profile(name)
+            for t in range(50, 101):
+                self.assertGreater(interpolate(p.cpu_curve, t), 0, f"{name} bei {t} °C")
+        self.assertEqual(interpolate(cfg.profile("balanced").cpu_curve, 30), 20)
 
     def test_invalid_curve_rejected(self):
         cfg = Config()

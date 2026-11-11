@@ -9,23 +9,28 @@ from pathlib import Path
 
 # Lüfterkurven: (Temperatur in °C, Lüfterleistung in %). Zwischen den Punkten
 # wird linear interpoliert.
+# Ausgelegt auf das Victus BV8D4EA: 20 % ~ 1100 U/min (leiser als die
+# BIOS-Automatik im Leerlauf), 100 % ~ 5400 U/min. 0 % = Lüfter stehen still -
+# das erlaubt nur "quiet" und nur unter 50 °C, weil Spannungswandler, SSD und
+# Akku keine eigenen Sensoren haben und sonst gar nicht mehr gekühlt würden.
 DEFAULT_PROFILES: dict[str, dict] = {
     "quiet": {
-        "cpu_curve": [[0, 0], [55, 0], [62, 25], [72, 45], [82, 70], [90, 100]],
-        "gpu_curve": [[0, 0], [52, 0], [60, 25], [70, 45], [78, 70], [85, 100]],
+        "cpu_curve": [[0, 0], [49, 0], [55, 20], [65, 30], [75, 50], [85, 75], [92, 100]],
+        "gpu_curve": [[0, 0], [46, 0], [52, 20], [62, 30], [72, 50], [80, 75], [87, 100]],
         "platform_profile": "quiet",
     },
     "balanced": {
-        "cpu_curve": [[0, 0], [48, 0], [55, 25], [65, 45], [75, 70], [85, 100]],
-        "gpu_curve": [[0, 0], [45, 0], [52, 25], [62, 45], [72, 70], [82, 100]],
+        "cpu_curve": [[0, 20], [50, 20], [60, 30], [70, 50], [80, 75], [88, 100]],
+        "gpu_curve": [[0, 20], [47, 20], [57, 30], [67, 50], [76, 75], [84, 100]],
         "platform_profile": "balanced",
     },
     "performance": {
-        "cpu_curve": [[0, 25], [45, 30], [55, 45], [65, 65], [75, 85], [80, 100]],
-        "gpu_curve": [[0, 25], [42, 30], [52, 45], [62, 65], [70, 85], [76, 100]],
+        "cpu_curve": [[0, 30], [45, 30], [55, 45], [65, 65], [75, 85], [82, 100]],
+        "gpu_curve": [[0, 30], [42, 30], [52, 45], [62, 65], [70, 85], [77, 100]],
         "platform_profile": "performance",
     },
 }
+
 
 DEFAULTS: dict = {
     "general": {

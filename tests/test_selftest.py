@@ -86,6 +86,18 @@ class SelftestTest(unittest.TestCase):
         r = self.run_test(FakeBiosWithModes(level_modes=("cool", "performance")))
         self.assertEqual(r.recommendation["fan_mode"], "cool")
 
+    def test_default_mode_preferred(self):
+        # Wie beim Victus BV8D4EA: jedes Setzen eines Modus schaltet frei.
+        r = self.run_test(FakeBiosWithModes(level_modes=("default", "cool", "performance")))
+        self.assertEqual(r.recommendation["fan_mode"], "default")
+
+    def test_levels_already_working_still_recommends_default(self):
+        bios = FakeBiosWithModes(level_modes=("default", "cool", "performance"))
+        bios.fan_mode = "performance"   # war vor dem Test schon gesetzt
+        r = self.run_test(bios)
+        self.assertTrue(r.level_works)
+        self.assertEqual(r.recommendation["fan_mode"], "default")
+
     def test_floor_detected(self):
         r = self.run_test(FakeBiosWithModes(floor=22))
         self.assertEqual(r.level_min_test, [2200, 2200])

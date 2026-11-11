@@ -125,13 +125,15 @@ def run_installer(src: Path, sha: str, branch: str) -> None:
     cmd = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
            "-File", str(script), "-Unattended", "-SourceSha", sha, "-SourceBranch", branch]
     log.info("Starte Installer: %s", " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800,
-                          creationflags=0x08000000)  # CREATE_NO_WINDOW
-    for line in (proc.stdout + proc.stderr).splitlines():
-        if line.strip():
-            log.info("  %s", line.rstrip())
+    # Ausgabe direkt in eine Datei statt über Pipes: Pipes können hängen, wenn ein
+    # gestarteter Prozess sie geerbt hat und weiterläuft.
+    paths.UPDATE_INSTALL_LOG.parent.mkdir(parents=True, exist_ok=True)
+    with paths.UPDATE_INSTALL_LOG.open("w", encoding="utf-8", errors="replace") as out:
+        proc = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+                              timeout=1800, creationflags=0x08000000)  # CREATE_NO_WINDOW
+    log.info("Installer beendet mit Code %s (Ausgabe: %s)", proc.returncode, paths.UPDATE_INSTALL_LOG)
     if proc.returncode != 0:
-        raise UpdateError(f"Installer fehlgeschlagen (Code {proc.returncode}) - Details in update.log")
+        raise UpdateError(f"Installer fehlgeschlagen (Code {proc.returncode}) - siehe {paths.UPDATE_INSTALL_LOG.name}")
 
 
 def check_and_update(cfg: dict, force: bool = False, check_only: bool | None = None) -> dict:
@@ -139,6 +141,13 @@ def check_and_update(cfg: dict, force: bool = False, check_only: bool | None = N
     if check_only is None:
         check_only = bool(cfg.get("check_only"))
     current = installed()
+    previous = read_json(paths.UPDATE_STATUS)
+    if previous.get("state") == "installing" and previous.get("latest_sha") \
+            and previous.get("latest_sha") == current.get("sha"):
+        # Ein früherer Lauf wurde nach erfolgreicher Installation unterbrochen.
+        write_status(state="updated", installed_sha=current.get("sha"),
+                     updated_at=current.get("installed_at", ""),
+                     message=f"Aktualisiert: {previous.get('latest_message', '')}")
     try:
         repo = cfg["repo"]
         branch = resolve_branch(repo, cfg.get("branch", ""))
