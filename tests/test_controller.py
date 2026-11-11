@@ -95,6 +95,12 @@ class ToggleTest(unittest.TestCase):
         self.assertFalse(t.update(50, False))
         self.assertTrue(t.update(0, True))
 
+    def test_min_on_time(self):
+        t = ToggleAdapter(80, 55, min_on=60)
+        self.assertTrue(t.update(90, False, now=0))
+        self.assertTrue(t.update(10, False, now=30))   # noch Mindestlaufzeit
+        self.assertFalse(t.update(10, False, now=61))
+
 
 class ConfigTest(unittest.TestCase):
     def test_example_config_loads(self):

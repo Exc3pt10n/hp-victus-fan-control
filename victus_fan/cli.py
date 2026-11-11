@@ -128,7 +128,7 @@ def cmd_restore(args) -> int:
     cfg = load_config(args.config)
     try:
         backend = create_backend(args.backend or cfg.general["backend"], cfg)
-        backend.restore_auto()
+        backend.shutdown()
     except Exception as exc:  # noqa: BLE001
         print(f"FEHLER: {exc}")
         return 1
@@ -146,7 +146,7 @@ def cmd_selftest(args) -> int:
         return code
 
     cfg = load_config(args.config)
-    print("Hardware-Test der Lüftersteuerung (dauert ca. 1 Minute).")
+    print("Hardware-Test der Lüftersteuerung (dauert ca. 2 Minuten).")
     print("Die Lüfter werden dabei hörbar schneller und langsamer.\n")
     try:
         backend = create_backend(args.backend or cfg.general["backend"], cfg)
@@ -157,7 +157,7 @@ def cmd_selftest(args) -> int:
 
     previous_mode = selftest.pause_service(print)
     try:
-        result = selftest.run(backend, settle=args.settle)
+        result = selftest.run(backend, settle=args.settle, extended=not args.quick)
     finally:
         try:
             write_override(mode=previous_mode)
@@ -232,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--apply", action="store_true", help="Ergebnis in die config.toml übernehmen")
     p.add_argument("--settle", type=float, default=15.0, help="Wartezeit je Schritt in Sekunden")
     p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
+    p.add_argument("--quick", action="store_true", help="BIOS-Leistungsmodi nicht testen")
     p.set_defaults(func=cmd_selftest)
 
     p = sub.add_parser("curve", help="Lüfterkurve eines Profils anzeigen")

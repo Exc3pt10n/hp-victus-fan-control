@@ -112,15 +112,20 @@ Drehzahl, ignorieren sie aber. Die Steuerung vergleicht deshalb laufend die geme
 Drehzahl mit ihrer Vorgabe und zeigt im Fenster eine Warnung, wenn die Lüfter nicht folgen.
 
 Der **Hardware-Test** (Button im Fenster oder Tray-Menü, Adminrechte nötig) prüft in etwa
-einer Minute, was dein Gerät wirklich kann:
+zwei Minuten, was dein Gerät wirklich kann:
 
 1. Drehzahl in der BIOS-Automatik messen
 2. Max-Lüfter einschalten und messen (ergibt auch die echte Maximaldrehzahl)
 3. Feste Drehzahl hoch und niedrig vorgeben und messen
+4. BIOS-Leistungsmodi `cool` und `performance` einschalten und messen
+5. Feste Drehzahl im Modus `performance` erneut prüfen – manche BIOS setzen sie nur dort um
+
+Danach wird der BIOS-Leistungsmodus auf `default` zurückgesetzt.
 
 Das Ergebnis wird automatisch in die `config.toml` übernommen (`[windows] mode` und
 Maximalstufen), der Dienst stellt sich ohne Neustart darauf ein. Ignoriert das BIOS feste
-Drehzahlen, schaltet die Steuerung zwischen BIOS-Automatik und Max-Lüfter um. Per
+Drehzahlen, schaltet die Steuerung zwischen BIOS-Automatik und Max-Lüfter um; Max bleibt
+dabei mindestens 60 s an (`[toggle] min_on_time`), damit die Lüfter nicht „pumpen“. Per
 Kommandozeile als Administrator:
 
 ```bash

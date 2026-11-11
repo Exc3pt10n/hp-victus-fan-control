@@ -61,6 +61,10 @@ DEFAULTS: dict = {
         # "auto": Drehzahlsteuerung testen, sonst Max-Umschaltung.
         # "level": nur Drehzahlstufen, "toggle": nur Max an/aus.
         "mode": "auto",
+        # Leistungsmodus des BIOS, der beim Start gesetzt wird:
+        # "" (nicht ändern), "default", "performance" oder "cool".
+        # Manche BIOS setzen feste Drehzahlen nur im Modus "performance" um.
+        "fan_mode": "",
         # Maximale Lüfterstufe in 100 U/min (55 = 5500 U/min).
         "max_level_cpu": 55,
         "max_level_gpu": 57,
@@ -72,6 +76,8 @@ DEFAULTS: dict = {
         # Für Geräte, die nur "Max an/aus" können.
         "engage_percent": 80.0,
         "release_percent": 55.0,
+        # Max bleibt mindestens so viele Sekunden an.
+        "min_on_time": 60.0,
     },
     "profiles": DEFAULT_PROFILES,
 }

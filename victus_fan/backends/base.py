@@ -54,6 +54,10 @@ class FanBackend(ABC):
     def restore_auto(self) -> None:
         """Steuerung an das BIOS/die Firmware zurückgeben."""
 
+    def shutdown(self) -> None:
+        """Beim Beenden des Dienstes aufgerufen."""
+        self.restore_auto()
+
     def describe(self) -> dict:
         return {
             "backend": self.name,

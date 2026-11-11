@@ -435,7 +435,7 @@ class App:
     def selftest(self) -> None:
         if not messagebox.askokcancel(
                 "Hardware-Test",
-                "Der Test prüft etwa 1 Minute lang, welche Lüfterbefehle dein Notebook wirklich "
+                "Der Test prüft etwa 2 Minuten lang, welche Lüfterbefehle dein Notebook wirklich "
                 "umsetzt. Die Lüfter werden dabei hörbar schneller und langsamer.\n\n"
                 "Das Ergebnis wird automatisch in die Konfiguration übernommen.\n"
                 "Bitte die Administrator-Abfrage bestätigen."):

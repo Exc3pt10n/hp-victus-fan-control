@@ -27,7 +27,8 @@ class FanService:
         self.dry_run = dry_run
         self.controller = FanController(config.control, config.general["critical_temp"])
         self.toggle = ToggleAdapter(float(config.toggle["engage_percent"]),
-                                    float(config.toggle["release_percent"]))
+                                    float(config.toggle["release_percent"]),
+                                    float(config.toggle["min_on_time"]))
         self.stop_event = threading.Event()
         self._last_sent: tuple | None = None
         self._last_sent_at = 0.0
@@ -63,8 +64,8 @@ class FanService:
             self._last_sent = None  # neu senden
             self._mismatch_since = None
         self.controller.configure(new.control, new.general["critical_temp"])
-        self.toggle.engage = float(new.toggle["engage_percent"])
-        self.toggle.release = float(new.toggle["release_percent"])
+        self.toggle.configure(float(new.toggle["engage_percent"]), float(new.toggle["release_percent"]),
+                              float(new.toggle["min_on_time"]))
         log.info("Konfiguration neu geladen")
 
     def _override(self) -> dict:
@@ -87,7 +88,7 @@ class FanService:
         elif b.supports_level and critical:
             command = ("max", True)
         else:
-            command = ("max", self.toggle.update(percent, critical))
+            command = ("max", self.toggle.update(percent, critical, now))
 
         keepalive = b.keepalive or 0
         due = keepalive and now - self._last_sent_at >= keepalive
@@ -240,4 +241,4 @@ class FanService:
         finally:
             if not self.dry_run:
                 log.info("Gebe Lüftersteuerung an das BIOS zurück")
-                self.backend.restore_auto()
+                self.backend.shutdown()

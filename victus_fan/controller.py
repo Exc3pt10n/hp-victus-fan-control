@@ -124,16 +124,25 @@ class FanController:
 class ToggleAdapter:
     """Für Geräte, die nur "Max-Lüfter an/aus" unterstützen."""
 
-    def __init__(self, engage: float, release: float):
+    def __init__(self, engage: float, release: float, min_on: float = 0.0):
+        self.configure(engage, release, min_on)
+        self.active = False
+        self._since = 0.0
+
+    def configure(self, engage: float, release: float, min_on: float = 0.0) -> None:
         if release >= engage:
             raise ValueError("toggle.release_percent muss kleiner als engage_percent sein")
         self.engage = engage
         self.release = release
-        self.active = False
+        # Max bleibt mindestens so lange an - sonst kühlt Max die Sensoren in
+        # Sekunden herunter und die Lüfter "pumpen" im Minutentakt.
+        self.min_on = min_on
 
-    def update(self, percent: float, critical: bool) -> bool:
+    def update(self, percent: float, critical: bool, now: float = 0.0) -> bool:
         if critical or percent >= self.engage:
+            if not self.active:
+                self._since = now
             self.active = True
-        elif percent <= self.release:
+        elif percent <= self.release and self.active and now - self._since >= self.min_on:
             self.active = False
         return self.active
