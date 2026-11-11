@@ -157,3 +157,36 @@ def load_config(path: str | Path | None) -> Config:
     for key in ("profile", "battery_profile"):
         cfg.profile(cfg.general[key])
     return cfg
+
+
+def _toml_value(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def update_config_values(path: str | Path, section: str, values: dict, note: str = "") -> None:
+    """Setzt einzelne Werte in einer Sektion der config.toml und lässt den Rest
+    (inkl. Kommentaren) unverändert."""
+    path = Path(path)
+    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    comment = f"  # {note}" if note else ""
+    header = f"[{section}]"
+    start = next((i for i, l in enumerate(lines) if l.strip().split("#")[0].strip() == header), None)
+    if start is None:
+        lines += ["", header] + [f"{k} = {_toml_value(v)}{comment}" for k, v in values.items()]
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
+        pending = dict(values)
+        for i in range(start + 1, end):
+            key = lines[i].split("=")[0].strip()
+            if "=" in lines[i] and not lines[i].lstrip().startswith("#") and key in pending:
+                lines[i] = f"{key} = {_toml_value(pending.pop(key))}{comment}"
+        for offset, (k, v) in enumerate(pending.items()):
+            lines.insert(start + 1 + offset, f"{k} = {_toml_value(v)}{comment}")
+    text = "\n".join(lines) + "\n"
+    tomllib.loads(text)  # nur gültiges TOML schreiben
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")

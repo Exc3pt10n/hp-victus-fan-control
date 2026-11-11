@@ -94,6 +94,12 @@ class WindowsBackend(FanBackend):
 
     def __init__(self, settings: dict):
         self.bios = HpBios()
+        self._max_active: bool | None = None
+        self._probed: bool | None = None
+        self.reconfigure(settings)
+
+    def reconfigure(self, settings: dict) -> None:
+        """Einstellungen übernehmen (auch zur Laufzeit nach Konfig-Änderung)."""
         self.max_cpu = int(settings["max_level_cpu"])
         self.max_gpu = int(settings["max_level_gpu"])
         self.keepalive = float(settings["keepalive"])
@@ -103,8 +109,11 @@ class WindowsBackend(FanBackend):
         elif mode == "toggle":
             self.supports_level = False
         else:
-            self.supports_level = self._probe_level()
-        self._max_active: bool | None = None
+            if self._probed is None:
+                self._probed = self._probe_level()
+            self.supports_level = self._probed
+        log.info("Windows-Backend: %s, max. Stufen CPU %d / GPU %d",
+                 "stufenlos" if self.supports_level else "Max an/aus", self.max_cpu, self.max_gpu)
 
     def _probe_level(self) -> bool:
         try:
@@ -148,13 +157,23 @@ class WindowsBackend(FanBackend):
         except Exception:  # noqa: BLE001
             return []
 
+    def levels_for(self, percent: float) -> list[int]:
+        p = max(0.0, min(100.0, percent)) / 100
+        return [round(self.max_cpu * p), round(self.max_gpu * p)]
+
+    def expected_rpm(self, percent: float) -> list[int] | None:
+        return [lvl * 100 for lvl in self.levels_for(percent)]
+
+    def set_levels(self, levels: list[int]) -> None:
+        """Lüfterstufen direkt setzen (auch für den Hardware-Test)."""
+        if self._max_active:
+            self.set_max(False)
+        self.bios.call(SET_FAN_LEVEL, levels, out_size=0)
+
     def set_percent(self, percent: float) -> None:
         if not self.supports_level:
             return super().set_percent(percent)
-        if self._max_active:
-            self.set_max(False)
-        p = max(0.0, min(100.0, percent)) / 100
-        self.bios.call(SET_FAN_LEVEL, [round(self.max_cpu * p), round(self.max_gpu * p)], out_size=0)
+        self.set_levels(self.levels_for(percent))
 
     def set_max(self, enabled: bool) -> None:
         self.bios.call(SET_MAX_FAN, [1 if enabled else 0], out_size=0)

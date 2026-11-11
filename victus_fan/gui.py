@@ -125,6 +125,21 @@ def open_file(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
+def run_selftest(config_path: Path) -> None:
+    """Startet den Hardware-Test in einem sichtbaren Konsolenfenster als Administrator."""
+    if sys.platform != "win32":
+        raise OSError("Bitte im Terminal ausführen: sudo victus-fan selftest --apply")
+    import ctypes
+
+    exe = Path(sys.executable)
+    if exe.name.lower() == "pythonw.exe":
+        exe = exe.with_name("python.exe")
+    params = f'-m victus_fan -c "{config_path}" selftest --apply --wait'
+    rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", str(exe), params, None, 1)  # type: ignore[attr-defined]
+    if rc <= 32:
+        raise OSError("Hardware-Test abgebrochen oder konnte nicht gestartet werden")
+
+
 def restart_service() -> None:
     """Startet den Hintergrunddienst neu (fragt nach Administratorrechten)."""
     if sys.platform == "win32":
@@ -250,7 +265,7 @@ class App:
         self.root = tk.Tk()
         self.root.title("Victus Lüftersteuerung")
         self.root.configure(bg=BG)
-        self.root.minsize(460, 560)
+        self.root.minsize(500, 640)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         try:
             from PIL import ImageTk
@@ -296,7 +311,7 @@ class App:
         cards.pack(fill="x", pady=(12, 10))
         self.cpu_card = ValueCard(cards, "CPU", CPU_COLOR)
         self.gpu_card = ValueCard(cards, "GPU", GPU_COLOR)
-        self.fan_card = ValueCard(cards, "Lüfter", FAN_COLOR)
+        self.fan_card = ValueCard(cards, "Lüfter (Vorgabe)", FAN_COLOR)
         for i, card in enumerate((self.cpu_card, self.gpu_card, self.fan_card)):
             card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
             cards.columnconfigure(i, weight=1, uniform="cards")
@@ -323,13 +338,22 @@ class App:
                             command=lambda m=mode: self.set_mode(m)).pack(side="left", padx=(0, 4))
 
         self.info = tk.Label(outer, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left", anchor="w")
-        self.info.pack(fill="x", pady=(2, 10))
+        self.info.pack(fill="x", pady=(2, 6))
+
+        self.warning = tk.Frame(outer, bg="#fff4e5", highlightbackground="#f5c26b", highlightthickness=1)
+        self.warning_text = tk.Label(self.warning, text="", bg="#fff4e5", fg="#8a4b00", font=("Segoe UI", 9),
+                                     justify="left", anchor="w", wraplength=300)
+        self.warning_text.pack(side="left", fill="x", expand=True, padx=10, pady=8)
+        ttk.Button(self.warning, text="Hardware-Test", command=self.selftest).pack(side="right", padx=8, pady=6)
+        self._warning_shown = False
 
         buttons = tk.Frame(outer, bg=BG)
         buttons.pack(fill="x", side="bottom")
+        self._buttons = buttons
         ttk.Button(buttons, text="Konfiguration …", command=self.edit_config).pack(side="left")
         ttk.Button(buttons, text="Log", command=self.open_log).pack(side="left", padx=6)
         ttk.Button(buttons, text="Dienst neu starten", command=self.restart).pack(side="left")
+        ttk.Button(buttons, text="Hardware-Test", command=self.selftest).pack(side="left", padx=6)
         tk.Label(buttons, text=f"v{__version__}", bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="right")
 
     def _section(self, parent, text: str) -> None:
@@ -371,6 +395,7 @@ class App:
             pystray.MenuItem("Konfiguration bearbeiten", call(self.edit_config)),
             pystray.MenuItem("Log öffnen", call(self.open_log)),
             pystray.MenuItem("Dienst neu starten", call(self.restart)),
+            pystray.MenuItem("Hardware-Test …", call(self.selftest)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Tray-Icon beenden", call(self.quit)),
         )
@@ -406,6 +431,29 @@ class App:
             open_file(paths.LOG_FILE)
         else:
             messagebox.showinfo("Victus Lüftersteuerung", "Noch keine Logdatei vorhanden.")
+
+    def selftest(self) -> None:
+        if not messagebox.askokcancel(
+                "Hardware-Test",
+                "Der Test prüft etwa 1 Minute lang, welche Lüfterbefehle dein Notebook wirklich "
+                "umsetzt. Die Lüfter werden dabei hörbar schneller und langsamer.\n\n"
+                "Das Ergebnis wird automatisch in die Konfiguration übernommen.\n"
+                "Bitte die Administrator-Abfrage bestätigen."):
+            return
+        try:
+            run_selftest(self.config_path)
+        except OSError as exc:
+            messagebox.showwarning("Hardware-Test", str(exc))
+
+    def _show_warning(self, text: str | None) -> None:
+        if text:
+            self.warning_text.config(text=text)
+            if not self._warning_shown:
+                self.warning.pack(fill="x", pady=(0, 10), before=self._buttons)
+                self._warning_shown = True
+        elif self._warning_shown:
+            self.warning.pack_forget()
+            self._warning_shown = False
 
     def restart(self) -> None:
         try:
@@ -458,6 +506,7 @@ class App:
 
     def _render(self, s: dict | None, running: bool) -> None:
         if not running:
+            self._show_warning(None)
             self.state_label.config(text="● Dienst läuft nicht", fg=HOT)
             for card in (self.cpu_card, self.gpu_card, self.fan_card):
                 card.set("–", " ", MUTED)
@@ -470,6 +519,8 @@ class App:
         mode = s.get("mode", "normal")
         if s.get("critical"):
             self.state_label.config(text="● Kritisch heiß – volle Drehzahl", fg=HOT)
+        elif s.get("warning"):
+            self.state_label.config(text="● Lüfter folgen nicht", fg=WARN)
         elif mode == "paused":
             self.state_label.config(text="● Pausiert – BIOS regelt", fg=WARN)
         elif mode == "max":
@@ -487,7 +538,10 @@ class App:
                           temp_color(s["gpu_temp"]))
         output = s["output"]
         fan_text = {"MAX": "MAX", "BIOS": "BIOS", "Auto": "Auto"}.get(output, f"{s['fan_percent']:.0f} %")
-        self.fan_card.set(fan_text, " / ".join(f"{r}" for r in rpm) + " U/min" if rpm else " ")
+        # Wert = Vorgabe der Steuerung, Unterzeile = tatsächlich gemessene Drehzahl
+        self.fan_card.set(fan_text, ("gemessen " + " / ".join(map(str, rpm)) + " U/min") if rpm else " ",
+                          WARN if s.get("warning") else TEXT)
+        self._show_warning(s.get("warning"))
 
         method = "stufenlos" if s.get("supports_level", True) else "Max an/aus (BIOS-Automatik dazwischen)"
         self.info.config(text=f"Profil {profile_label(s['profile'])} ({s['profile_reason']})  ·  "

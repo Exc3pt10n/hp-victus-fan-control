@@ -110,5 +110,44 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(s.controller.critical_temp, 80.0)
 
 
+class EffectTest(unittest.TestCase):
+    def _service(self, rpm):
+        b = FakeBackend(level=True)
+        b.temp = 65.0
+        b.read_fan_rpm = lambda: rpm
+        b.expected_rpm = lambda p: [int(55 * p), int(57 * p)]
+        return FanService(Config(), b)
+
+    def _run(self, s, seconds):
+        status = None
+        with mock.patch("victus_fan.service.time.monotonic", side_effect=list(range(0, seconds, 2))):
+            for _ in range(0, seconds, 2):
+                status = s.step()
+        return status
+
+    def test_warns_when_fans_ignore_command(self):
+        status = self._run(self._service([2700, 0]), 80)
+        self.assertIsNotNone(status["warning"])
+
+    def test_no_warning_when_fans_follow(self):
+        status = self._run(self._service([2475, 2565]), 80)
+        self.assertIsNone(status["warning"])
+
+
+class ConfigUpdateTest(unittest.TestCase):
+    def test_update_keeps_comments_and_adds_keys(self):
+        from victus_fan.config import update_config_values
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "config.toml"
+            p.write_text(Path("config.example.toml").read_text(encoding="utf-8"), encoding="utf-8")
+            update_config_values(p, "windows", {"mode": "toggle", "max_level_cpu": 49}, note="Test")
+            cfg = load_config(p)
+            self.assertEqual(cfg.windows["mode"], "toggle")
+            self.assertEqual(cfg.windows["max_level_cpu"], 49)
+            self.assertIn("# Eigene Kurven", p.read_text(encoding="utf-8"))
+            update_config_values(p, "neu", {"x": 1})
+            self.assertIn("[neu]", p.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

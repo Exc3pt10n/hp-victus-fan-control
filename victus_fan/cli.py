@@ -136,6 +136,49 @@ def cmd_restore(args) -> int:
     return 0
 
 
+def cmd_selftest(args) -> int:
+    from . import selftest
+    from .config import update_config_values
+
+    def finish(code: int) -> int:
+        if args.wait:
+            input("\nEnter zum Schließen ...")
+        return code
+
+    cfg = load_config(args.config)
+    print("Hardware-Test der Lüftersteuerung (dauert ca. 1 Minute).")
+    print("Die Lüfter werden dabei hörbar schneller und langsamer.\n")
+    try:
+        backend = create_backend(args.backend or cfg.general["backend"], cfg)
+    except Exception as exc:  # noqa: BLE001
+        print(f"FEHLER beim Zugriff auf die Hardware: {exc}")
+        print("Bitte als Administrator ausführen.")
+        return finish(1)
+
+    previous_mode = selftest.pause_service(print)
+    try:
+        result = selftest.run(backend, settle=args.settle)
+    finally:
+        try:
+            write_override(mode=previous_mode)
+        except OSError:
+            pass
+    selftest.report(result)
+
+    rec = result.recommendation
+    if args.apply and rec.get("mode"):
+        try:
+            update_config_values(args.config, "windows", rec, note="vom Hardware-Test gesetzt")
+            print(f"\nEinstellungen in {args.config} gespeichert: {rec}")
+            print("Der Dienst übernimmt sie automatisch innerhalb weniger Sekunden.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"\nKonnte die Konfiguration nicht speichern: {exc}")
+            return finish(1)
+    elif rec.get("mode"):
+        print(f"\nEmpfohlen für [windows] in der config.toml: {rec}  (automatisch mit --apply)")
+    return finish(0 if rec.get("mode") else 2)
+
+
 def cmd_curve(args) -> int:
     cfg = load_config(args.config)
     profile = cfg.profile(args.name or cfg.general["profile"])
@@ -183,6 +226,13 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("restore", help="Lüfter wieder dem BIOS überlassen (Max aus, Automatik)")
     p.add_argument("--backend", choices=["auto", "windows", "linux", "simulate"])
     p.set_defaults(func=cmd_restore)
+
+    p = sub.add_parser("selftest", help="Hardware-Test: prüfen, welche Lüfterbefehle wirklich wirken")
+    p.add_argument("--backend", choices=["auto", "windows", "linux", "simulate"])
+    p.add_argument("--apply", action="store_true", help="Ergebnis in die config.toml übernehmen")
+    p.add_argument("--settle", type=float, default=15.0, help="Wartezeit je Schritt in Sekunden")
+    p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
+    p.set_defaults(func=cmd_selftest)
 
     p = sub.add_parser("curve", help="Lüfterkurve eines Profils anzeigen")
     p.add_argument("name", nargs="?")

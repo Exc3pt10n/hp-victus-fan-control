@@ -40,6 +40,13 @@ class FanBackend(ABC):
     def set_max(self, enabled: bool) -> None:
         raise BackendError(f"{self.name}: Max-Lüfter nicht unterstützt")
 
+    def expected_rpm(self, percent: float) -> list[int] | None:
+        """Erwartete Drehzahlen für eine Vorgabe (None = unbekannt)."""
+        return None
+
+    def reconfigure(self, settings: dict) -> None:
+        """Backend-spezifische Einstellungen zur Laufzeit übernehmen."""
+
     def set_platform_profile(self, profile: str) -> None:
         """Optional: Leistungsprofil des Notebooks setzen."""
 

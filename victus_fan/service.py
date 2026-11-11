@@ -35,6 +35,8 @@ class FanService:
         self._errors = 0
         self._paused = False
         self._config_mtime = self._mtime()
+        self._last_change_at = 0.0
+        self._mismatch_since: float | None = None
 
     # ------------------------------------------------------------------
     def _mtime(self) -> float | None:
@@ -54,7 +56,12 @@ class FanService:
         except Exception as exc:  # noqa: BLE001
             log.error("Konfiguration fehlerhaft, behalte die alte: %s", exc)
             return
+        old_windows = self.config.windows
         self.config = new
+        if new.windows != old_windows:
+            self.backend.reconfigure(new.windows)
+            self._last_sent = None  # neu senden
+            self._mismatch_since = None
         self.controller.configure(new.control, new.general["critical_temp"])
         self.toggle.engage = float(new.toggle["engage_percent"])
         self.toggle.release = float(new.toggle["release_percent"])
@@ -93,6 +100,7 @@ class FanService:
                     b.set_max(command[1])
             if command != self._last_sent:
                 log.debug("Setze %s", command)
+                self._last_change_at = now
             self._last_sent = command
             self._last_sent_at = now
         return f"{command[1]} %" if command[0] == "level" else ("MAX" if command[1] else "Auto")
@@ -129,7 +137,11 @@ class FanService:
                 self._paused = False
             output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
+        rpm = b.read_fan_rpm()
+        warning = self._check_effect(rpm, now, mode)
+
         status = {
+            "warning": warning,
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "timestamp": time.time(),
             "mode": mode,
@@ -146,11 +158,36 @@ class FanService:
             "fan_percent": round(decision.percent, 1),
             "output": output,
             "critical": decision.critical,
-            "fan_rpm": b.read_fan_rpm(),
+            "fan_rpm": rpm,
             "dry_run": self.dry_run,
         }
         self._write_status(status)
         return status
+
+    def _check_effect(self, rpm: list[int], now: float, mode: str) -> str | None:
+        """Erkennt, ob die Lüfter der Drehzahlvorgabe tatsächlich folgen."""
+        sent = self._last_sent
+        if mode != "normal" or self.dry_run or not sent or sent[0] != "level":
+            self._mismatch_since = None
+            return None
+        expected = self.backend.expected_rpm(sent[1])
+        if not rpm or not expected or now - self._last_change_at < 20:
+            # Lüfter brauchen nach einer Änderung Zeit - bisherigen Zustand behalten.
+            return self._mismatch_warning(now)
+        off = any(abs(r - e) > max(1000, 0.4 * e) for r, e in zip(rpm, expected))
+        if not off:
+            if self._mismatch_since is not None:
+                log.info("Lüfter folgen der Vorgabe wieder")
+            self._mismatch_since = None
+        elif self._mismatch_since is None:
+            self._mismatch_since = now
+            log.warning("Drehzahl %s U/min weicht von der Vorgabe %s U/min ab", rpm, expected)
+        return self._mismatch_warning(now)
+
+    def _mismatch_warning(self, now: float) -> str | None:
+        if self._mismatch_since is None or now - self._mismatch_since < 30:
+            return None
+        return "Die Lüfter folgen der Drehzahlvorgabe nicht. Bitte den Hardware-Test ausführen."
 
     def _write_status(self, status: dict) -> None:
         if not self.status_file:

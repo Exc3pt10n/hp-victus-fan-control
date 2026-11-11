@@ -105,6 +105,31 @@ Profile legst du als `[profiles.name]` mit `cpu_curve`/`gpu_curve` an; sie ersch
 automatisch in der Oberfläche. Eine fehlerhafte Konfiguration wird ignoriert (siehe Log),
 die bisherige bleibt aktiv.
 
+## Hardware-Test – bei Problemen zuerst ausführen
+
+Nicht jedes Victus-BIOS setzt alle Befehle um: Manche Modelle **bestätigen** eine feste
+Drehzahl, ignorieren sie aber. Die Steuerung vergleicht deshalb laufend die gemessene
+Drehzahl mit ihrer Vorgabe und zeigt im Fenster eine Warnung, wenn die Lüfter nicht folgen.
+
+Der **Hardware-Test** (Button im Fenster oder Tray-Menü, Adminrechte nötig) prüft in etwa
+einer Minute, was dein Gerät wirklich kann:
+
+1. Drehzahl in der BIOS-Automatik messen
+2. Max-Lüfter einschalten und messen (ergibt auch die echte Maximaldrehzahl)
+3. Feste Drehzahl hoch und niedrig vorgeben und messen
+
+Das Ergebnis wird automatisch in die `config.toml` übernommen (`[windows] mode` und
+Maximalstufen), der Dienst stellt sich ohne Neustart darauf ein. Ignoriert das BIOS feste
+Drehzahlen, schaltet die Steuerung zwischen BIOS-Automatik und Max-Lüfter um. Per
+Kommandozeile als Administrator:
+
+```bash
+victus-fan selftest --apply
+```
+
+Funktioniert danach immer noch etwas nicht, schick mir bitte die Zeile **„Rohdaten“** am Ende
+der Testausgabe.
+
 ## Erster Test – bitte einmal durchführen
 
 Ich konnte die Steuerung nicht auf echter Victus-Hardware testen. Die BIOS-Befehle
