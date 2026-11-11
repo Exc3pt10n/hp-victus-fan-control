@@ -105,6 +105,18 @@ Die Profile sind auf die gemessenen Drehzahlen des Victus BV8D4EA abgestimmt
 | **Volle Drehzahl** | Lüfter dauerhaft auf Maximum (z. B. beim Rendern) |
 | **Pause (BIOS)** | Steuerung ruht, das BIOS regelt wie ab Werk |
 
+| Leistungsmodus (BIOS) | Bedeutung |
+|---|---|
+| **Automatisch** | Wert aus der Konfiguration (`[windows] fan_mode`, vom Hardware-Test gewählt) |
+| **Standard** | Normale Leistungsgrenzen des Notebooks |
+| **Kühl** | Weniger Leistung, kühleres Gehäuse, leiser unter Last |
+| **Performance** | Mehr Leistung für Spiele/Rendering, dafür mehr Wärme und Lüfter |
+
+Der Leistungsmodus ist derselbe, den auch der OMEN Gaming Hub umschaltet. Er bestimmt, wie
+viel Leistung CPU und GPU aufnehmen dürfen; **Profil** und **Modus** bestimmen nur die
+Lüfter. Beide lassen sich frei kombinieren (z. B. Performance + Profil Leise). Bei **Pause**
+wird der Leistungsmodus auf Standard gesetzt, danach gilt wieder deine Auswahl.
+
 Die Oberfläche läuft mit normalen Benutzerrechten. Mit der Hardware spricht nur der
 Hintergrunddienst; die Oberfläche liest dessen Status und schreibt nur deine Auswahl.
 Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
@@ -128,6 +140,12 @@ victus-fan mode max
 ```
 
 Modi: `normal`, `max`, `paused`.
+
+```bash
+victus-fan power performance
+```
+
+Leistungsmodi: `auto`, `default`, `cool`, `performance`.
 
 ```bash
 victus-fan curve balanced

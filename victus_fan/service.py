@@ -40,6 +40,8 @@ class FanService:
         self._platform_profile: str | None = None
         self._errors = 0
         self._paused = False
+        # Zuletzt an das Backend gegebener BIOS-Leistungsmodus
+        self._applied_fan_mode: str | None = config.windows.get("fan_mode") or ""
         self._config_mtime = self._mtime()
         self._last_change_at = 0.0
         self._mismatch_since: float | None = None
@@ -65,7 +67,7 @@ class FanService:
         old_windows = self.config.windows
         self.config = new
         if new.windows != old_windows:
-            self.backend.reconfigure(new.windows)
+            self._apply_power_mode(self._override(), force=True)
             self._last_sent = None  # neu senden
             self._mismatch_since = None
         self.controller.configure(new.control, new.general["critical_temp"])
@@ -119,6 +121,8 @@ class FanService:
         reading = Reading(b.read_cpu_temp(), b.read_gpu_temp(), on_battery)
         override = self._override()
         mode = override["mode"]
+        if mode != "paused" and not self._paused:
+            self._apply_power_mode(override)
         name, reason = self.active_profile_name(on_battery, override)
         profile = self.config.profile(name)
 
@@ -141,8 +145,7 @@ class FanService:
             if self._paused:
                 log.info("Steuerung fortgesetzt")
                 self._paused = False
-                if not self.dry_run:
-                    b.reconfigure(self.config.windows)
+                self._apply_power_mode(override, force=True)
             output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
         rpm = b.read_fan_rpm()
@@ -154,7 +157,9 @@ class FanService:
             "timestamp": time.time(),
             "mode": mode,
             "supports_level": b.supports_level,
-            "fan_mode": "" if mode == "paused" else (self.config.windows.get("fan_mode") or ""),
+            "fan_mode": "" if mode == "paused" else (self._applied_fan_mode or ""),
+            "power_mode": override["power_mode"],
+            "power_modes_available": hasattr(b, "set_fan_mode"),
             "backend": b.name,
             "profile": name,
             "profile_reason": reason,
@@ -196,11 +201,32 @@ class FanService:
             return None
         return warning
 
+    def effective_windows(self, override: dict) -> dict:
+        """Windows-Einstellungen mit dem vom Benutzer gewählten Leistungsmodus."""
+        settings = dict(self.config.windows)
+        if override.get("power_mode", "auto") != "auto":
+            settings["fan_mode"] = override["power_mode"]
+        return settings
+
+    def _apply_power_mode(self, override: dict, force: bool = False) -> None:
+        settings = self.effective_windows(override)
+        wanted = settings.get("fan_mode") or ""
+        if self.dry_run or (not force and wanted == self._applied_fan_mode):
+            return
+        if wanted != self._applied_fan_mode:
+            log.info("BIOS-Leistungsmodus -> %s", wanted or "(unverändert)")
+        self.backend.reconfigure(settings)
+        self._applied_fan_mode = wanted
+        self._last_sent = None      # Drehzahl im neuen Modus neu senden
+        self._mismatch_since = None
+
     def _escalate_fan_mode(self) -> bool:
         """Nächsten BIOS-Leistungsmodus probieren und merken. False = keiner mehr übrig."""
         b = self.backend
         if not hasattr(b, "set_fan_mode") or self.dry_run:
             return False
+        if self._override()["power_mode"] != "auto":
+            return False  # vom Benutzer gewählt - nicht eigenmächtig ändern
         current = self.config.windows.get("fan_mode") or ""
         index = FAN_MODE_CHAIN.index(current) + 1 if current in FAN_MODE_CHAIN else 0
         if index >= len(FAN_MODE_CHAIN):
@@ -210,6 +236,7 @@ class FanService:
         self.config.raw["windows"]["fan_mode"] = new_mode
         try:
             b.reconfigure(self.config.windows)
+            self._applied_fan_mode = new_mode
         except Exception as exc:  # noqa: BLE001
             log.error("Leistungsmodus '%s' fehlgeschlagen: %s", new_mode, exc)
         if self.config.path is not None:

@@ -13,7 +13,9 @@ from pathlib import Path
 from . import paths
 
 MODES = ("normal", "max", "paused")
-DEFAULT_OVERRIDE = {"profile": "auto", "mode": "normal"}
+# BIOS-Leistungsmodus: "auto" = Wert aus der config.toml ([windows] fan_mode)
+POWER_MODES = ("auto", "default", "cool", "performance")
+DEFAULT_OVERRIDE = {"profile": "auto", "mode": "normal", "power_mode": "auto"}
 # Älter als das gilt der Status als veraltet (Dienst läuft nicht).
 STALE_AFTER = 15.0
 
@@ -29,6 +31,8 @@ def read_override(path: Path | None = None) -> dict:
         pass
     if data["mode"] not in MODES:
         data["mode"] = "normal"
+    if data["power_mode"] not in POWER_MODES:
+        data["power_mode"] = "auto"
     return data
 
 

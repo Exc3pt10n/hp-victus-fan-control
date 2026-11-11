@@ -173,5 +173,44 @@ class EscalationTest(unittest.TestCase):
             self.assertEqual(load_config(cfg_path).windows["fan_mode"], "performance")
 
 
+class PowerModeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.override = Path(self.tmp.name) / "override.json"
+        self.b = FakeBackend(level=True)
+        self.b.set_fan_mode = lambda name: None
+        self.b.applied = []
+        self.b.reconfigure = lambda settings: self.b.applied.append(settings.get("fan_mode"))
+        cfg = Config()
+        cfg.raw["windows"]["fan_mode"] = "default"
+        self.s = FanService(cfg, self.b, override_file=self.override)
+
+    def set(self, **values):
+        self.override.write_text(json.dumps(values))
+
+    def test_user_choice_is_applied_once(self):
+        self.set(power_mode="performance")
+        self.s.step(); self.s.step()
+        self.assertEqual(self.b.applied, ["performance"])
+        self.set(power_mode="auto")             # zurück zum Wert aus der Konfiguration
+        status = self.s.step()
+        self.assertEqual(self.b.applied, ["performance", "default"])
+        self.assertEqual(status["fan_mode"], "default")
+
+    def test_resume_after_pause_restores_choice(self):
+        self.set(power_mode="cool", mode="paused")
+        self.s.step()
+        self.assertEqual(self.b.calls[-1], ("restore",))
+        self.set(power_mode="cool", mode="normal")
+        self.s.step()
+        self.assertEqual(self.b.applied[-1], "cool")
+
+    def test_no_escalation_against_user_choice(self):
+        self.set(power_mode="cool")
+        self.s.step()
+        self.assertFalse(self.s._escalate_fan_mode())
+
+
 if __name__ == "__main__":
     unittest.main()

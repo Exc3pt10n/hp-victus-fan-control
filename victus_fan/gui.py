@@ -32,6 +32,13 @@ TASK_NAME = "VictusFanControl"
 PROFILE_LABELS = {"auto": "Automatisch", "quiet": "Leise", "balanced": "Ausgewogen",
                   "performance": "Leistung"}
 MODE_LABELS = {"normal": "Intelligent", "max": "Volle Drehzahl", "paused": "Pause (BIOS)"}
+POWER_LABELS = {"auto": "Automatisch", "default": "Standard", "cool": "Kühl", "performance": "Performance"}
+POWER_HINTS = {
+    "auto": "Wert aus der Konfiguration (vom Hardware-Test gewählt)",
+    "default": "normale Leistungsgrenzen",
+    "cool": "weniger Leistung, kühleres Gehäuse, leiser unter Last",
+    "performance": "mehr Leistung für Spiele, dafür mehr Wärme und Lüfter",
+}
 HISTORY_SECONDS = 600
 
 # Farben
@@ -324,7 +331,7 @@ class App:
         self.root = tk.Tk()
         self.root.title("Victus Lüftersteuerung")
         self.root.configure(bg=BG)
-        self.root.minsize(500, 640)
+        self.root.minsize(520, 720)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         try:
             from PIL import ImageTk
@@ -336,6 +343,7 @@ class App:
 
         self.profile_var = tk.StringVar(value="auto")
         self.mode_var = tk.StringVar(value="normal")
+        self.power_var = tk.StringVar(value="auto")
         self._build()
         self._start_tray()
         if not show and self.tray is not None:
@@ -396,6 +404,15 @@ class App:
             ttk.Radiobutton(bar, text=label, value=mode, variable=self.mode_var, style="Seg.Toolbutton",
                             command=lambda m=mode: self.set_mode(m)).pack(side="left", padx=(0, 4))
 
+        self._section(outer, "Leistungsmodus (BIOS)")
+        bar = tk.Frame(outer, bg=BG)
+        bar.pack(fill="x", pady=(4, 2))
+        for power, label in POWER_LABELS.items():
+            ttk.Radiobutton(bar, text=label, value=power, variable=self.power_var, style="Seg.Toolbutton",
+                            command=lambda p=power: self.set_power(p)).pack(side="left", padx=(0, 4))
+        self.power_hint = tk.Label(outer, text="", bg=BG, fg=MUTED, font=("Segoe UI", 8), anchor="w")
+        self.power_hint.pack(fill="x", pady=(0, 10))
+
         self.info = tk.Label(outer, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left", anchor="w")
         self.info.pack(fill="x", pady=(2, 6))
 
@@ -451,6 +468,10 @@ class App:
             return pystray.MenuItem(profile_label(name), call(self.set_profile, name), radio=True,
                                     checked=lambda _i, n=name: read_override()["profile"] == n)
 
+        def power_item(power):
+            return pystray.MenuItem(POWER_LABELS[power], call(self.set_power, power), radio=True,
+                                    checked=lambda _i, p=power: read_override()["power_mode"] == p)
+
         def mode_item(mode):
             return pystray.MenuItem(MODE_LABELS[mode], call(self.set_mode, mode), radio=True,
                                     checked=lambda _i, m=mode: read_override()["mode"] == m)
@@ -460,6 +481,7 @@ class App:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Profil", pystray.Menu(lambda: [profile_item(n) for n in self._profiles()])),
             pystray.MenuItem("Modus", pystray.Menu(*[mode_item(m) for m in MODE_LABELS])),
+            pystray.MenuItem("Leistungsmodus", pystray.Menu(*[power_item(p) for p in POWER_LABELS])),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Konfiguration bearbeiten", call(self.edit_config)),
             pystray.MenuItem("Log öffnen", call(self.open_log)),
@@ -492,6 +514,9 @@ class App:
 
     def set_mode(self, mode: str) -> None:
         self._write(mode=mode)
+
+    def set_power(self, power: str) -> None:
+        self._write(power_mode=power)
 
     def edit_config(self) -> None:
         open_file(self.config_path)
@@ -596,6 +621,8 @@ class App:
         override = read_override()
         self.profile_var.set(override["profile"])
         self.mode_var.set(override["mode"])
+        self.power_var.set(override["power_mode"])
+        self.power_hint.config(text=POWER_HINTS.get(override["power_mode"], ""))
 
         status = read_status()
         self.status = status
@@ -648,9 +675,12 @@ class App:
                           WARN if s.get("warning") else TEXT)
         self._show_warning(s.get("warning"))
 
+        if self.power_var.get() == "auto" and s.get("fan_mode"):
+            self.power_hint.config(text=f"aus der Konfiguration: {POWER_LABELS.get(s['fan_mode'], s['fan_mode'])} "
+                                        f"– {POWER_HINTS.get(s['fan_mode'], '')}")
         method = "stufenlos" if s.get("supports_level", True) else "Max an/aus (BIOS-Automatik dazwischen)"
         if s.get("fan_mode"):
-            method += f" (BIOS-Modus {s['fan_mode']})"
+            method += f" · BIOS-Modus {POWER_LABELS.get(s['fan_mode'], s['fan_mode'])}"
         self.info.config(text=f"Profil {profile_label(s['profile'])} ({s['profile_reason']})  ·  "
                               f"Bedarf {s['demand_percent']:.0f} %  ·  Steuerung: {method}"
                               + ("  ·  Akkubetrieb" if s.get("on_battery") else ""))
