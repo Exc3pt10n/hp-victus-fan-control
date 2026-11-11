@@ -112,6 +112,7 @@ class WindowsBackend(FanBackend):
         """Einstellungen übernehmen (auch zur Laufzeit nach Konfig-Änderung)."""
         self.max_cpu = int(settings["max_level_cpu"])
         self.max_gpu = int(settings["max_level_gpu"])
+        self.min_level = int(settings.get("min_level", 0))
         self.keepalive = float(settings["keepalive"])
         fan_mode = settings.get("fan_mode", "") or ""
         if fan_mode != self._fan_mode:
@@ -179,10 +180,15 @@ class WindowsBackend(FanBackend):
 
     def levels_for(self, percent: float) -> list[int]:
         p = max(0.0, min(100.0, percent)) / 100
-        return [round(self.max_cpu * p), round(self.max_gpu * p)]
+        if p == 0:
+            return [0, 0]
+        return [max(self.min_level, round(self.max_cpu * p)), max(self.min_level, round(self.max_gpu * p))]
 
     def expected_rpm(self, percent: float) -> list[int] | None:
-        return [lvl * 100 for lvl in self.levels_for(percent)]
+        levels = self.levels_for(percent)
+        if 0 in levels:
+            return None  # bei Stufe 0 entscheidet das BIOS (Stillstand oder Minimum)
+        return [lvl * 100 for lvl in levels]
 
     def set_levels(self, levels: list[int]) -> None:
         """Lüfterstufen direkt setzen (auch für den Hardware-Test)."""
@@ -214,13 +220,15 @@ class WindowsBackend(FanBackend):
         raise BackendError(f"Leistungsmodus '{name}' abgelehnt ({'; '.join(errors)})")
 
     def shutdown(self) -> None:
-        """Beim Beenden: auch einen selbst gesetzten Leistungsmodus zurücksetzen."""
+        """Beim Beenden/Pausieren: Max aus und einen selbst gesetzten
+        Leistungsmodus zurücksetzen. ``reconfigure`` setzt ihn wieder."""
         self.restore_auto()
         if self._fan_mode and self._fan_mode != "default":
             try:
                 self.set_fan_mode("default")
             except Exception as exc:  # noqa: BLE001
                 log.error("Leistungsmodus konnte nicht zurückgesetzt werden: %s", exc)
+        self._fan_mode = ""
 
     def restore_auto(self) -> None:
         # Max abschalten; die stufenlose Vorgabe verfällt nach ~120 s von selbst.
@@ -231,5 +239,6 @@ class WindowsBackend(FanBackend):
 
     def describe(self) -> dict:
         info = super().describe()
-        info.update(fan_mode=self._fan_mode or "(unverändert)", max_level_cpu=self.max_cpu, max_level_gpu=self.max_gpu, keepalive=self.keepalive)
+        info.update(fan_mode=self._fan_mode or "(unverändert)", min_level=self.min_level,
+                    max_level_cpu=self.max_cpu, max_level_gpu=self.max_gpu, keepalive=self.keepalive)
         return info

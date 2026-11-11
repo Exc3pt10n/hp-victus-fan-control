@@ -544,6 +544,8 @@ class App:
         self._show_warning(s.get("warning"))
 
         method = "stufenlos" if s.get("supports_level", True) else "Max an/aus (BIOS-Automatik dazwischen)"
+        if s.get("fan_mode"):
+            method += f" (BIOS-Modus {s['fan_mode']})"
         self.info.config(text=f"Profil {profile_label(s['profile'])} ({s['profile_reason']})  ·  "
                               f"Bedarf {s['demand_percent']:.0f} %  ·  Steuerung: {method}"
                               + ("  ·  Akkubetrieb" if s.get("on_battery") else ""))

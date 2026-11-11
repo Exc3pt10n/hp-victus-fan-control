@@ -91,7 +91,9 @@ class ServiceTest(unittest.TestCase):
             s.step()
             self.assertEqual(len(b.calls), n)  # pausiert: nichts senden
             override.write_text(json.dumps({"mode": "normal"}))
+            b.reconfigure = lambda settings: b.calls.append(("reconfigure",))
             s.step()
+            self.assertIn(("reconfigure",), b.calls)
             self.assertEqual(b.calls[-1][0], "level")
 
     def test_config_reload(self):

@@ -128,7 +128,7 @@ class FanService:
             if not self._paused:
                 log.info("Pausiert - Lüfter laufen in der BIOS-Automatik")
                 if not self.dry_run:
-                    b.restore_auto()
+                    b.shutdown()  # inkl. BIOS-Leistungsmodus zurück auf Standard
                 self._paused = True
                 self._last_sent = None
             output = "BIOS"
@@ -136,6 +136,8 @@ class FanService:
             if self._paused:
                 log.info("Steuerung fortgesetzt")
                 self._paused = False
+                if not self.dry_run:
+                    b.reconfigure(self.config.windows)
             output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
         rpm = b.read_fan_rpm()
@@ -147,6 +149,7 @@ class FanService:
             "timestamp": time.time(),
             "mode": mode,
             "supports_level": b.supports_level,
+            "fan_mode": "" if mode == "paused" else (self.config.windows.get("fan_mode") or ""),
             "backend": b.name,
             "profile": name,
             "profile_reason": reason,

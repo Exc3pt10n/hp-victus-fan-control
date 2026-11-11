@@ -17,6 +17,11 @@ from .state import read_override, read_status, write_override
 MIN_DIFF_RPM = 700
 
 
+# Reihenfolge = Vorzug: "cool" erhöht die Leistungsaufnahme nicht, "performance" schon.
+TEST_FAN_MODES = ("cool", "performance")
+LOW_TEST_LEVEL = 11  # ca. 1100 U/min - entspricht etwa der Anlaufdrehzahl der Profile
+
+
 @dataclass
 class Result:
     baseline: list[int] = field(default_factory=list)
@@ -28,10 +33,11 @@ class Result:
     max_works: bool = False
     level_works: bool = False
     # Erweiterter Test: BIOS-Leistungsmodi
-    fan_modes: dict = field(default_factory=dict)
-    perf_level_high: list[int] = field(default_factory=list)
-    perf_level_low: list[int] = field(default_factory=list)
-    perf_level_works: bool = False
+    fan_modes: dict = field(default_factory=dict)      # Modus -> Leerlauf-Drehzahl
+    mode_levels: dict = field(default_factory=dict)    # Modus -> {high, low, works}
+    best_fan_mode: str = ""
+    level_zero: list[int] = field(default_factory=list)
+    level_min_test: list[int] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     recommendation: dict = field(default_factory=dict)
 
@@ -126,38 +132,50 @@ def run(backend, settle: float = 15.0, say=print, extended: bool = True) -> Resu
     rec: dict = {}
     if r.level_works:
         rec["mode"] = "level"
-    elif r.perf_level_works:
+    elif r.best_fan_mode:
         rec["mode"] = "level"
-        rec["fan_mode"] = "performance"
+        rec["fan_mode"] = r.best_fan_mode
     elif r.max_works:
         rec["mode"] = "toggle"
-    if r.fan_modes and not r.level_works:
-        rec["fan_mode"] = "performance" if r.perf_level_works else ""
+    if r.fan_modes and not r.level_works and not r.best_fan_mode:
+        rec["fan_mode"] = ""
     if r.max_works and len(r.max_on) >= 2 and has_levels:
         rec["max_level_cpu"] = max(1, r.max_on[0] // 100)
         rec["max_level_gpu"] = max(1, r.max_on[1] // 100)
+    if r.level_min_test:
+        # Hebt das BIOS kleine Stufen an, ist das die echte Untergrenze.
+        floor = max(r.level_min_test) // 100
+        rec["min_level"] = floor if floor > LOW_TEST_LEVEL + 3 else 0
     r.recommendation = rec
     return r
 
 
 def _run_fan_modes(backend, r: Result, settle: float, say) -> None:
-    say("\n4) BIOS-Leistungsmodi testen")
     try:
-        for mode in ("cool", "performance"):
+        for mode in TEST_FAN_MODES:
+            say(f"\n4) BIOS-Leistungsmodus {mode}")
             try:
                 backend.set_fan_mode(mode)
             except Exception as exc:  # noqa: BLE001
                 r.errors.append(f"set_fan_mode({mode}): {exc}")
                 continue
-            r.fan_modes[mode] = _wait_and_measure(backend, settle, f"Modus {mode}", say)
-
-        if "performance" in r.fan_modes:
-            say("\n5) Feste Drehzahl im Modus performance")
+            r.fan_modes[mode] = _wait_and_measure(backend, settle, "Automatik", say)
             backend.set_levels(r.level_high_set)
-            r.perf_level_high = _wait_and_measure(backend, settle, f"Stufe {r.level_high_set}", say)
+            high = _wait_and_measure(backend, settle, f"Stufe {r.level_high_set}", say)
             backend.set_levels(r.level_low_set)
-            r.perf_level_low = _wait_and_measure(backend, settle, f"Stufe {r.level_low_set}", say)
-            r.perf_level_works = _avg(r.perf_level_high) - _avg(r.perf_level_low) >= MIN_DIFF_RPM
+            low = _wait_and_measure(backend, settle, f"Stufe {r.level_low_set}", say)
+            works = _avg(high) - _avg(low) >= MIN_DIFF_RPM
+            r.mode_levels[mode] = {"high": high, "low": low, "works": works}
+            if works and not r.best_fan_mode:
+                r.best_fan_mode = mode
+
+        if r.best_fan_mode:
+            say(f"\n5) Niedrige Stufen im Modus {r.best_fan_mode}")
+            backend.set_fan_mode(r.best_fan_mode)
+            backend.set_levels([LOW_TEST_LEVEL, LOW_TEST_LEVEL])
+            r.level_min_test = _wait_and_measure(backend, settle, f"Stufe [{LOW_TEST_LEVEL}, {LOW_TEST_LEVEL}]", say)
+            backend.set_levels([0, 0])
+            r.level_zero = _wait_and_measure(backend, settle, "Stufe [0, 0]", say)
     except Exception as exc:  # noqa: BLE001
         r.errors.append(f"Leistungsmodus-Test: {exc}")
     finally:
@@ -175,12 +193,19 @@ def report(r: Result, say=print) -> None:
     say("\n=== Ergebnis ===")
     say(f"Max-Lüfter an/aus:     {'wirkt' if r.max_works else 'wirkt NICHT'}")
     say(f"Feste Drehzahlvorgabe: {'wirkt' if r.level_works else 'wirkt NICHT'}")
-    if r.perf_level_high or r.perf_level_low:
-        say(f"  ... im Modus performance: {'wirkt' if r.perf_level_works else 'wirkt NICHT'}")
     for mode, rpm in r.fan_modes.items():
         diff = _avg(rpm) - _avg(r.baseline)
-        say(f"Modus {mode:<12} {' / '.join(map(str, rpm))} U/min "
-            f"({'+' if diff >= 0 else ''}{diff:.0f} ggü. Automatik)")
+        lv = r.mode_levels.get(mode, {})
+        say(f"Modus {mode:<12} Automatik {' / '.join(map(str, rpm))} U/min "
+            f"({'+' if diff >= 0 else ''}{diff:.0f}), feste Drehzahl: "
+            f"{'wirkt' if lv.get('works') else 'wirkt NICHT'}")
+    if r.level_min_test:
+        say(f"Stufe {LOW_TEST_LEVEL} (~{LOW_TEST_LEVEL * 100} U/min): "
+            f"{' / '.join(map(str, r.level_min_test))} U/min")
+    if r.level_zero:
+        stops = all(x == 0 for x in r.level_zero)
+        say(f"Stufe 0: {' / '.join(map(str, r.level_zero))} U/min "
+            f"({'Lüfter stehen still' if stops else 'BIOS hält eine Mindestdrehzahl'})")
     if r.fan_modes:
         say("Hinweis: Der BIOS-Leistungsmodus wurde auf 'default' zurückgesetzt. Falls du im\n"
             "OMEN Gaming Hub einen anderen Modus nutzt, stelle ihn dort ggf. neu ein.")
@@ -190,6 +215,8 @@ def report(r: Result, say=print) -> None:
     if rec.get("mode") == "level" and rec.get("fan_mode") == "performance":
         say("\n-> Stufenlose Steuerung möglich, aber nur im BIOS-Modus 'performance'.\n"
             "   Dieser Modus erlaubt auch mehr Leistungsaufnahme (etwas mehr Wärme).")
+    elif rec.get("mode") == "level" and rec.get("fan_mode"):
+        say(f"\n-> Stufenlose Steuerung möglich im BIOS-Modus '{rec['fan_mode']}'.")
     elif rec.get("mode") == "level":
         say("\n-> Stufenlose Steuerung möglich.")
     elif rec.get("mode") == "toggle":

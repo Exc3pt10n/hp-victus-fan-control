@@ -65,6 +65,8 @@ DEFAULTS: dict = {
         # "" (nicht ändern), "default", "performance" oder "cool".
         # Manche BIOS setzen feste Drehzahlen nur im Modus "performance" um.
         "fan_mode": "",
+        # Kleinste Stufe > 0, die das BIOS wirklich umsetzt (0 = keine Grenze).
+        "min_level": 0,
         # Maximale Lüfterstufe in 100 U/min (55 = 5500 U/min).
         "max_level_cpu": 55,
         "max_level_gpu": 57,

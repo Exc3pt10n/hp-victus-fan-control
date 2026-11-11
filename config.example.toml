@@ -23,6 +23,7 @@ min_running_percent = 20.0    # Anlaufdrehzahl, wenn die Lüfter laufen sollen
 [windows]
 mode = "auto"                 # auto | level | toggle  ("victus-fan selftest --apply" ermittelt den passenden Wert)
 fan_mode = ""                 # BIOS-Leistungsmodus: "" (nicht ändern) | default | performance | cool
+min_level = 0                 # kleinste wirksame Stufe > 0 (wird vom Hardware-Test ermittelt)
 max_level_cpu = 55            # 55 = 5500 U/min (Wert aus "victus-fan diagnose" unter Volllast prüfen)
 max_level_gpu = 57
 keepalive = 60.0              # BIOS übernimmt nach ~120 s ohne Befehl wieder

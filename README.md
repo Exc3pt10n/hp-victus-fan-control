@@ -117,10 +117,14 @@ zwei Minuten, was dein Gerät wirklich kann:
 1. Drehzahl in der BIOS-Automatik messen
 2. Max-Lüfter einschalten und messen (ergibt auch die echte Maximaldrehzahl)
 3. Feste Drehzahl hoch und niedrig vorgeben und messen
-4. BIOS-Leistungsmodi `cool` und `performance` einschalten und messen
-5. Feste Drehzahl im Modus `performance` erneut prüfen – manche BIOS setzen sie nur dort um
+4. In den BIOS-Leistungsmodi `cool` und `performance` jeweils prüfen, ob feste Drehzahlen
+   wirken – manche BIOS (z. B. beim Victus BV8D4EA) setzen sie nur dort um. `cool` wird
+   bevorzugt, weil `performance` auch mehr Leistungsaufnahme (= mehr Wärme) erlaubt.
+5. Niedrige Stufen prüfen: Hebt das BIOS sie an (`min_level`) und stehen die Lüfter bei 0 still?
 
-Danach wird der BIOS-Leistungsmodus auf `default` zurückgesetzt.
+Danach wird der BIOS-Leistungsmodus auf `default` zurückgesetzt; die Steuerung setzt den
+ermittelten Modus selbst, solange sie läuft. Im Modus **Pause** und beim Beenden stellt sie
+ihn wieder auf Standard.
 
 Das Ergebnis wird automatisch in die `config.toml` übernommen (`[windows] mode` und
 Maximalstufen), der Dienst stellt sich ohne Neustart darauf ein. Ignoriert das BIOS feste
