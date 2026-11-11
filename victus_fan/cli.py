@@ -179,6 +179,22 @@ def cmd_selftest(args) -> int:
     return finish(0 if rec.get("mode") else 2)
 
 
+def cmd_update(args) -> int:
+    from . import updater
+
+    updater.setup_logging()
+    cfg = load_config(args.config)
+    if args.auto and not cfg.update.get("enabled", True):
+        logging.getLogger(__name__).info("Auto-Update ist deaktiviert ([update] enabled = false)")
+        return 0
+    current = updater.installed()
+    print(f"Installiert: {__version__} ({(current.get('sha') or 'unbekannt')[:7]})")
+    status = updater.check_and_update(cfg.update, force=args.force,
+                                      check_only=True if args.check else None)
+    print(status.get("message", ""))
+    return 1 if status.get("state") == "error" else 0
+
+
 def cmd_curve(args) -> int:
     cfg = load_config(args.config)
     profile = cfg.profile(args.name or cfg.general["profile"])
@@ -234,6 +250,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
     p.add_argument("--quick", action="store_true", help="BIOS-Leistungsmodi nicht testen")
     p.set_defaults(func=cmd_selftest)
+
+    p = sub.add_parser("update", help="nach Updates suchen und installieren (Adminrechte)")
+    p.add_argument("--check", action="store_true", help="nur prüfen, nicht installieren")
+    p.add_argument("--force", action="store_true", help="auch ohne neue Version neu installieren")
+    p.add_argument("--auto", action="store_true", help="für die geplante Aufgabe: beachtet [update] enabled")
+    p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("curve", help="Lüfterkurve eines Profils anzeigen")
     p.add_argument("name", nargs="?")

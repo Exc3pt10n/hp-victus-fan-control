@@ -21,10 +21,11 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 Write-Host "Stoppe und entferne geplante Aufgabe ..."
 Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
+Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe' OR Name = 'python.exe'" |
     Where-Object { $_.CommandLine -like "*victus_fan*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName "VictusFanUpdate" -Confirm:$false -ErrorAction SilentlyContinue
 
 $venvPython = Join-Path $InstallDir "venv\Scripts\python.exe"
 if (Test-Path $venvPython) {

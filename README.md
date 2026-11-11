@@ -41,6 +41,36 @@ Der Installer
 Für ein Update einfach die neue Version herunterladen und `install.cmd` erneut ausführen –
 deine `config.toml` bleibt erhalten.
 
+## Automatische Updates
+
+Neue Versionen werden automatisch installiert – du musst nichts mehr herunterladen.
+
+- Die geplante Aufgabe **VictusFanUpdate** prüft 10 Minuten nach dem Systemstart und danach
+  alle 6 Stunden, ob es auf GitHub einen neueren Stand gibt (Standard-Branch von
+  [`Exc3pt10n/hp-victus-fan-control`](https://github.com/Exc3pt10n/hp-victus-fan-control)).
+- Gibt es einen, lädt sie ihn herunter und führt dessen Installer unbeaufsichtigt aus.
+  Deine `config.toml` bleibt erhalten, die Lüftersteuerung wird danach sofort wieder
+  gestartet – auch wenn das Update fehlschlägt.
+- Das Tray-Icon bemerkt das Update und startet sich selbst mit der neuen Version neu.
+- Version und Update-Status stehen unten im Fenster; dort und im Tray-Menü gibt es
+  **Nach Updates suchen** (fragt nach Administratorrechten).
+
+```bash
+victus-fan update --check
+```
+
+| Einstellung in `[update]` | Wirkung |
+|---|---|
+| `enabled = false` | Auto-Update abschalten |
+| `check_only = true` | Nur anzeigen, dass es ein Update gibt, nicht installieren |
+| `branch = "..."` | Anderen Branch verfolgen (leer = Standard-Branch) |
+
+Log der Updates: `C:\ProgramData\VictusFan\update.log`
+
+> **Wichtig:** Das Update läuft mit SYSTEM-Rechten und installiert, was auf dem verfolgten
+> Branch liegt. Wer in das Repository pushen darf, kann damit Code auf deinem Notebook
+> ausführen. Halte den Schreibzugriff auf das Repository daher auf dich beschränkt.
+
 ## Oberfläche und Tray-Icon
 
 ![Fenster der Lüftersteuerung](docs/fenster.png)

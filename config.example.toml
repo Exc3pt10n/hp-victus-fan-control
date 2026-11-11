@@ -28,6 +28,12 @@ max_level_cpu = 55            # 55 = 5500 U/min (Wert aus "victus-fan diagnose" 
 max_level_gpu = 57
 keepalive = 60.0              # BIOS übernimmt nach ~120 s ohne Befehl wieder
 
+[update]
+enabled = true                # automatisch nach Updates suchen (beim Start + alle 6 Stunden)
+check_only = false            # true = nur anzeigen, nicht selbst installieren
+repo = "Exc3pt10n/hp-victus-fan-control"
+branch = ""                   # leer = Standard-Branch des Repositories
+
 [toggle]                      # nur für Geräte ohne stufenlose Steuerung
 engage_percent = 80.0         # ab diesem Bedarf: Max-Lüfter an
 release_percent = 55.0        # unter diesem Bedarf: zurück zur BIOS-Automatik

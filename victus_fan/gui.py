@@ -24,6 +24,7 @@ from tkinter import messagebox, ttk
 from . import __version__, paths
 from .config import load_config
 from .state import read_override, read_status, write_override
+from .updater import installed as read_installed, read_json
 
 log = logging.getLogger(__name__)
 
@@ -140,6 +141,41 @@ def run_selftest(config_path: Path) -> None:
         raise OSError("Hardware-Test abgebrochen oder konnte nicht gestartet werden")
 
 
+def start_update_check() -> None:
+    """Startet die Update-Aufgabe sofort (fragt nach Administratorrechten)."""
+    if sys.platform != "win32":
+        raise OSError("Bitte im Terminal ausführen: sudo victus-fan update")
+    import ctypes
+
+    rc = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
+        None, "runas", "schtasks.exe", f'/Run /TN "{paths.UPDATE_TASK}"', None, 0)
+    if rc <= 32:
+        raise OSError("Update-Suche abgebrochen oder konnte nicht gestartet werden")
+
+
+UPDATE_TEXT = {
+    "current": "Aktuell",
+    "available": "Update verfügbar",
+    "installing": "Update wird installiert …",
+    "updated": "Aktualisiert",
+    "error": "Update-Prüfung fehlgeschlagen",
+}
+
+
+def update_summary(status: dict) -> tuple[str, str]:
+    """Kurztext + Farbe für den Update-Status."""
+    state = status.get("state")
+    if not state:
+        return "Noch nicht nach Updates gesucht", MUTED
+    text = UPDATE_TEXT.get(state, state)
+    if state == "updated" and status.get("updated_at"):
+        text += f" am {status['updated_at']}"
+    elif status.get("checked_at") and state in ("current", "error", "available"):
+        text += f" (geprüft {status['checked_at']})"
+    color = {"error": WARN, "available": ACCENT, "installing": ACCENT, "updated": OK}.get(state, MUTED)
+    return text, color
+
+
 def restart_service() -> None:
     """Startet den Hintergrunddienst neu (fragt nach Administratorrechten)."""
     if sys.platform == "win32":
@@ -176,6 +212,14 @@ class SingleInstance:
 
             self._mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\VictusFanTray")  # type: ignore[attr-defined]
             self.primary = ctypes.windll.kernel32.GetLastError() != 183  # type: ignore[attr-defined]
+
+    def release(self) -> None:
+        """Mutex freigeben, damit eine neue Instanz starten kann."""
+        if sys.platform == "win32" and getattr(self, "_mutex", None):
+            import ctypes
+
+            ctypes.windll.kernel32.CloseHandle(self._mutex)  # type: ignore[attr-defined]
+            self._mutex = None
 
     def request_show(self) -> None:
         self.show_flag.write_text("1")
@@ -261,6 +305,8 @@ class App:
         self.status: dict | None = None
         self.calls: queue.Queue = queue.Queue()
         self.tray = None
+        self._install_mtime = self._installed_mtime()
+        self._relaunch_pending = False
 
         self.root = tk.Tk()
         self.root.title("Victus Lüftersteuerung")
@@ -354,7 +400,17 @@ class App:
         ttk.Button(buttons, text="Log", command=self.open_log).pack(side="left", padx=6)
         ttk.Button(buttons, text="Dienst neu starten", command=self.restart).pack(side="left")
         ttk.Button(buttons, text="Hardware-Test", command=self.selftest).pack(side="left", padx=6)
-        tk.Label(buttons, text=f"v{__version__}", bg=BG, fg=MUTED, font=("Segoe UI", 8)).pack(side="right")
+
+        updates = tk.Frame(outer, bg=BG)
+        updates.pack(fill="x", side="bottom", before=buttons, pady=(8, 0))
+        self.version_label = tk.Label(updates, text="", bg=BG, fg=MUTED, font=("Segoe UI", 8))
+        self.version_label.pack(side="left")
+        self.update_label = tk.Label(updates, text="", bg=BG, fg=MUTED, font=("Segoe UI", 8))
+        self.update_label.pack(side="left", padx=(6, 0))
+        link = tk.Label(updates, text="Nach Updates suchen", bg=BG, fg=ACCENT, cursor="hand2",
+                        font=("Segoe UI", 8, "underline"))
+        link.pack(side="right")
+        link.bind("<Button-1>", lambda _e: self.check_updates())
 
     def _section(self, parent, text: str) -> None:
         tk.Label(parent, text=text, bg=BG, fg=TEXT, font=("Segoe UI Semibold", 10)).pack(anchor="w")
@@ -396,6 +452,7 @@ class App:
             pystray.MenuItem("Log öffnen", call(self.open_log)),
             pystray.MenuItem("Dienst neu starten", call(self.restart)),
             pystray.MenuItem("Hardware-Test …", call(self.selftest)),
+            pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Tray-Icon beenden", call(self.quit)),
         )
@@ -473,6 +530,39 @@ class App:
         else:
             self.root.withdraw()
 
+    def check_updates(self) -> None:
+        try:
+            start_update_check()
+        except OSError as exc:
+            messagebox.showwarning("Victus Lüftersteuerung", str(exc))
+
+    # ---- Neustart nach Update ---------------------------------------------
+    @staticmethod
+    def _installed_mtime() -> float | None:
+        try:
+            return paths.INSTALL_INFO.stat().st_mtime
+        except OSError:
+            return None
+
+    def _check_relaunch(self) -> None:
+        mtime = self._installed_mtime()
+        if mtime is None or mtime == self._install_mtime or self._relaunch_pending:
+            return
+        # Kurz warten, bis der Installer ganz fertig ist.
+        self._relaunch_pending = True
+        self.root.after(8000, self.relaunch)
+
+    def relaunch(self) -> None:
+        """Startet die Oberfläche mit dem aktualisierten Code neu."""
+        visible = self.root.state() != "withdrawn"
+        log.info("Update installiert - starte Oberfläche neu")
+        self.instance.release()
+        args = [sys.executable, "-m", "victus_fan", "gui"] + ([] if visible else ["--hidden"])
+        flags = 0x00000008 if sys.platform == "win32" else 0  # DETACHED_PROCESS
+        cwd = str(paths.INSTALL_DIR) if paths.INSTALL_DIR.exists() else None
+        subprocess.Popen(args, cwd=cwd, creationflags=flags)
+        self.quit()
+
     def quit(self) -> None:
         if self.tray is not None:
             threading.Thread(target=self.tray.stop, daemon=True).start()
@@ -487,6 +577,8 @@ class App:
                 return
         if self.instance.show_requested():
             self.show()
+        self._check_relaunch()
+        self._render_update()
 
         override = read_override()
         self.profile_var.set(override["profile"])
@@ -557,6 +649,13 @@ class App:
         self._update_tray(hottest, mode, True, tip)
         if self.root.state() != "withdrawn":
             self.chart.redraw()
+
+    def _render_update(self) -> None:
+        info = read_installed()
+        sha = (info.get("sha") or "")[:7]
+        self.version_label.config(text=f"v{__version__}" + (f" ({sha})" if sha else ""))
+        text, color = update_summary(read_json(paths.UPDATE_STATUS))
+        self.update_label.config(text="· " + text, fg=color)
 
     def _update_tray(self, temp, mode, running, tip) -> None:
         if self.tray is None:

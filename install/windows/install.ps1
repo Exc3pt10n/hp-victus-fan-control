@@ -1,29 +1,41 @@
 ﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
-    Installiert die Victus-Lüftersteuerung als Hintergrunddienst (Windows 11).
+    Installiert oder aktualisiert die Victus-Lüftersteuerung (Windows 11).
 
 .DESCRIPTION
     - prüft/installiert Python 3.11+
     - legt eine eigene Python-Umgebung unter "C:\Program Files\VictusFan" an
-    - kopiert die Konfiguration nach C:\ProgramData\VictusFan
-    - richtet eine geplante Aufgabe ein, die beim Systemstart unsichtbar als
-      SYSTEM läuft und bei Absturz automatisch neu startet
-    - macht den Befehl "victus-fan" in jeder Konsole verfügbar
+    - kopiert die Konfiguration nach C:\ProgramData\VictusFan (bestehende bleibt)
+    - geplante Aufgabe "VictusFanControl": Lüftersteuerung, startet mit Windows,
+      läuft unsichtbar als SYSTEM, startet sich bei Absturz neu
+    - geplante Aufgabe "VictusFanUpdate": sucht beim Start und alle 6 Stunden
+      nach Updates und installiert sie
+    - Tray-Icon im Autostart und im Startmenü, Befehl "victus-fan" im PATH
+
+.PARAMETER Unattended
+    Für den Auto-Updater: keine Rückfragen, Tray-Icon und Updater laufen
+    weiter, der Dienst wird auf jeden Fall wieder gestartet.
 #>
 param(
-    [switch]$SkipDiagnose
+    [switch]$SkipDiagnose,
+    [switch]$Unattended,
+    [string]$SourceSha = "",
+    [string]$SourceBranch = ""
 )
 
 $ErrorActionPreference = "Stop"
 $TaskName   = "VictusFanControl"
+$UpdateTask = "VictusFanUpdate"
 $InstallDir = Join-Path $env:ProgramFiles "VictusFan"
 $DataDir    = Join-Path $env:ProgramData "VictusFan"
 $RepoDir    = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+$UsersSid   = "*S-1-5-32-545"   # VORDEFINIERT\Benutzer (sprachunabhängig)
 
 # --- Als Administrator neu starten ---------------------------------------
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    if ($Unattended) { throw "Administratorrechte erforderlich" }
     Write-Host "Starte mit Administratorrechten neu ..."
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
     if ($SkipDiagnose) { $argList += "-SkipDiagnose" }
@@ -33,147 +45,232 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 function Step($text) { Write-Host "`n==> $text" -ForegroundColor Cyan }
 
+# Externe Programme aufrufen, ohne dass Ausgaben auf stderr (z. B. pip-Warnungen)
+# unter Windows PowerShell 5.1 als Fehler gewertet werden.
+# Invoke-Native: Ausgabe -> Konsole, Rückgabe = nur der Exit-Code.
+function Invoke-Native {
+    param([string]$Exe, [string[]]$Arguments, [switch]$Quiet)
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        if ($Quiet) {
+            & $Exe @Arguments 2>&1 | Out-Null
+        } else {
+            & $Exe @Arguments 2>&1 | ForEach-Object { Write-Host "$_" }
+        }
+        return [int]$LASTEXITCODE
+    } catch {
+        return 9009
+    } finally {
+        $ErrorActionPreference = $old
+    }
+}
+
+# Get-NativeOutput: letzte Ausgabezeile oder $null bei Fehler.
+function Get-NativeOutput {
+    param([string]$Exe, [string[]]$Arguments)
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $out = & $Exe @Arguments 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+        return "$($out | Select-Object -Last 1)".Trim()
+    } catch {
+        return $null
+    } finally {
+        $ErrorActionPreference = $old
+    }
+}
+
+function Stop-VictusProcesses([string]$Pattern) {
+    Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe' OR Name = 'python.exe'" |
+        Where-Object { $_.CommandLine -like $Pattern } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
 # --- Python finden -------------------------------------------------------
+function Test-Python([string]$Exe) {
+    if (-not $Exe -or -not (Test-Path $Exe)) { return $false }
+    (Invoke-Native $Exe @("-c", "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)") -Quiet) -eq 0
+}
+
 function Find-Python {
     $candidates = @()
     if (Get-Command py.exe -ErrorAction SilentlyContinue) {
         foreach ($v in "3.13", "3.12", "3.11") {
-            try {
-                $exe = & py.exe "-$v" -c "import sys; print(sys.executable)" 2>$null
-                if ($LASTEXITCODE -eq 0 -and $exe) { $candidates += $exe.Trim() }
-            } catch {}
+            $out = Get-NativeOutput "py.exe" @("-$v", "-c", "import sys; print(sys.executable)")
+            if ($out) { $candidates += $out }
         }
     }
     foreach ($name in "python.exe", "python3.exe") {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue
         if ($cmd -and $cmd.Source -notlike "*WindowsApps*") { $candidates += $cmd.Source }
     }
-    foreach ($exe in $candidates) {
-        & $exe -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" 2>$null
-        if ($LASTEXITCODE -eq 0) { return $exe }
-    }
+    foreach ($exe in $candidates) { if (Test-Python $exe) { return $exe } }
     return $null
 }
 
-Step "Suche Python 3.11 oder neuer"
-$python = Find-Python
-if (-not $python) {
-    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
-        throw "Python 3.11+ nicht gefunden und winget fehlt. Bitte Python von https://www.python.org installieren (Haken bei 'Add to PATH' setzen) und erneut starten."
-    }
-    Write-Host "Python nicht gefunden - installiere Python 3.12 systemweit über winget ..."
-    winget install --id Python.Python.3.12 --scope machine --silent --accept-package-agreements --accept-source-agreements
-    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-    $python = Find-Python
-    if (-not $python) { throw "Python-Installation fehlgeschlagen. Bitte manuell installieren." }
-}
-Write-Host "Verwende $python"
-
-# --- Laufenden Dienst stoppen (bei Update) -------------------------------
-if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-    Step "Stoppe vorhandene Installation"
-    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
-        Where-Object { $_.CommandLine -like "*victus_fan*" } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-}
-
-# --- Virtuelle Umgebung + Paket ------------------------------------------
-Step "Installiere nach $InstallDir"
-New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-$venv = Join-Path $InstallDir "venv"
-if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
-    & $python -m venv $venv
-    if ($LASTEXITCODE -ne 0) { throw "venv konnte nicht angelegt werden" }
-}
+$venv        = Join-Path $InstallDir "venv"
 $venvPython  = Join-Path $venv "Scripts\python.exe"
 $venvPythonw = Join-Path $venv "Scripts\pythonw.exe"
-& $venvPython -m pip install --upgrade --quiet pip
-& $venvPython -m pip install --upgrade --quiet "$RepoDir"
-if ($LASTEXITCODE -ne 0) { throw "pip install fehlgeschlagen" }
-& $venvPython -c "import tkinter" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "tkinter fehlt in dieser Python-Installation - das Fenster der Oberfläche wird nicht funktionieren. Python von python.org mit 'tcl/tk and IDLE' installieren."
+
+if (-not (Test-Python $venvPython)) {
+    if ($Unattended) { throw "Python-Umgebung fehlt oder ist defekt - bitte install.cmd manuell ausführen" }
+    Step "Suche Python 3.11 oder neuer"
+    $python = Find-Python
+    if (-not $python) {
+        if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+            throw "Python 3.11+ nicht gefunden und winget fehlt. Bitte Python von https://www.python.org installieren (Haken bei 'Add to PATH' setzen) und erneut starten."
+        }
+        Write-Host "Python nicht gefunden - installiere Python 3.12 systemweit über winget ..."
+        $null = Invoke-Native "winget.exe" @("install", "--id", "Python.Python.3.12", "--scope", "machine", "--silent",
+            "--accept-package-agreements", "--accept-source-agreements")
+        $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+        $python = Find-Python
+        if (-not $python) { throw "Python-Installation fehlgeschlagen. Bitte manuell installieren." }
+    }
+    Write-Host "Verwende $python"
 }
 
-# --- Konfiguration --------------------------------------------------------
-Step "Konfiguration in $DataDir"
-New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
-$configFile = Join-Path $DataDir "config.toml"
-if (-not (Test-Path $configFile)) {
-    Copy-Item (Join-Path $RepoDir "config.example.toml") $configFile
-    Write-Host "config.toml angelegt"
+# --- Laufenden Dienst stoppen --------------------------------------------
+Step "Stoppe laufende Lüftersteuerung"
+if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+}
+if ($Unattended) {
+    # Nur den Dienst - Tray-Icon und Updater laufen weiter.
+    Stop-VictusProcesses "*victus_fan run*"
 } else {
-    Write-Host "Vorhandene config.toml bleibt erhalten"
-}
-# Normale Benutzer dürfen das Profil umschalten (override.json) und den Status lesen.
-$override = Join-Path $DataDir "override.json"
-if (-not (Test-Path $override)) { Set-Content -Path $override -Value '{"profile": "auto"}' -Encoding UTF8 }
-icacls $override /grant "*S-1-5-32-545:(M)" | Out-Null   # VORDEFINIERT\Benutzer
-# Die Oberfläche öffnet die Konfiguration im Editor - Speichern ohne Adminrechte erlauben.
-# Der Dienst übernimmt Änderungen automatisch (kein Neustart nötig).
-icacls $configFile /grant "*S-1-5-32-545:(M)" | Out-Null
-
-# --- Befehl "victus-fan" bereitstellen -----------------------------------
-$binDir = Join-Path $InstallDir "bin"
-New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-Set-Content -Path (Join-Path $binDir "victus-fan.cmd") -Encoding ASCII -Value "@`"$venvPython`" -m victus_fan %*"
-$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-if (($machinePath -split ";") -notcontains $binDir) {
-    [Environment]::SetEnvironmentVariable("Path", "$machinePath;$binDir", "Machine")
-    Write-Host "$binDir zum PATH hinzugefügt (neue Konsole öffnen)"
+    Stop-VictusProcesses "*victus_fan run*"
+    Stop-VictusProcesses "*victus_fan gui*"
 }
 
-# --- Tray-Icon: Autostart bei Anmeldung + Startmenü ----------------------
-Step "Richte Tray-Icon und Startmenü-Eintrag ein"
-$iconFile = Join-Path $InstallDir "victus-fan.ico"
-& $venvPython -c "import sys; from victus_fan.gui import make_fan_image; make_fan_image(256).save(sys.argv[1], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])" $iconFile
-$shell = New-Object -ComObject WScript.Shell
-$startupLnk = Join-Path ([Environment]::GetFolderPath("CommonStartup")) "Victus Lüftersteuerung.lnk"
-$menuLnk    = Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "Victus Lüftersteuerung.lnk"
-foreach ($item in @(@($startupLnk, "-m victus_fan gui --hidden"), @($menuLnk, "-m victus_fan gui"))) {
-    $lnk = $shell.CreateShortcut($item[0])
-    $lnk.TargetPath = $venvPythonw
-    $lnk.Arguments = $item[1]
-    $lnk.WorkingDirectory = $InstallDir
-    $lnk.IconLocation = $iconFile
-    $lnk.Description = "Victus Lüftersteuerung"
-    $lnk.Save()
-}
+$serviceRegistered = $false
+try {
+    # --- Virtuelle Umgebung + Paket --------------------------------------
+    Step "Installiere nach $InstallDir"
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    if (-not (Test-Python $venvPython)) {
+        if ((Invoke-Native $python @("-m", "venv", $venv)) -ne 0) { throw "venv konnte nicht angelegt werden" }
+    }
+    $null = Invoke-Native $venvPython @("-m", "pip", "install", "--upgrade", "--quiet", "--disable-pip-version-check", "pip")
+    if ((Invoke-Native $venvPython @("-m", "pip", "install", "--upgrade", "--quiet", "--disable-pip-version-check", "$RepoDir")) -ne 0) {
+        throw "pip install fehlgeschlagen"
+    }
+    if ((Invoke-Native $venvPython @("-c", "import tkinter") -Quiet) -ne 0) {
+        Write-Warning "tkinter fehlt - das Fenster der Oberfläche wird nicht funktionieren. Python von python.org mit 'tcl/tk and IDLE' installieren."
+    }
 
-# --- Hardware prüfen -----------------------------------------------------
-if (-not $SkipDiagnose) {
-    Step "Prüfe Hardware-Unterstützung"
-    & $venvPython -m victus_fan diagnose
-    if ($LASTEXITCODE -ne 0) {
-        throw "Diagnose fehlgeschlagen - Dienst wird nicht eingerichtet. Details siehe oben."
+    # --- Konfiguration ----------------------------------------------------
+    Step "Konfiguration in $DataDir"
+    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+    $configFile = Join-Path $DataDir "config.toml"
+    if (-not (Test-Path $configFile)) {
+        Copy-Item (Join-Path $RepoDir "config.example.toml") $configFile
+        Write-Host "config.toml angelegt"
+    } else {
+        Write-Host "Vorhandene config.toml bleibt erhalten"
+    }
+    # Normale Benutzer dürfen Profil/Modus umschalten und die Konfiguration bearbeiten.
+    $override = Join-Path $DataDir "override.json"
+    if (-not (Test-Path $override)) { Set-Content -Path $override -Value '{"profile": "auto", "mode": "normal"}' -Encoding UTF8 }
+    $null = Invoke-Native "icacls.exe" @($override, "/grant", "${UsersSid}:(M)") -Quiet
+    $null = Invoke-Native "icacls.exe" @($configFile, "/grant", "${UsersSid}:(M)") -Quiet
+
+    # --- Befehl "victus-fan" bereitstellen -------------------------------
+    $binDir = Join-Path $InstallDir "bin"
+    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+    Set-Content -Path (Join-Path $binDir "victus-fan.cmd") -Encoding ASCII -Value "@`"$venvPython`" -m victus_fan %*"
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    if (($machinePath -split ";") -notcontains $binDir) {
+        [Environment]::SetEnvironmentVariable("Path", "$machinePath;$binDir", "Machine")
+        Write-Host "$binDir zum PATH hinzugefügt (neue Konsole öffnen)"
+    }
+
+    # --- Tray-Icon: Autostart bei Anmeldung + Startmenü ------------------
+    Step "Richte Tray-Icon und Startmenü-Eintrag ein"
+    $iconFile = Join-Path $InstallDir "victus-fan.ico"
+    $null = Invoke-Native $venvPython @("-c", "import sys; from victus_fan.gui import make_fan_image; make_fan_image(256).save(sys.argv[1], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])", $iconFile) -Quiet
+    $shell = New-Object -ComObject WScript.Shell
+    $startupLnk = Join-Path ([Environment]::GetFolderPath("CommonStartup")) "Victus Lüftersteuerung.lnk"
+    $menuLnk    = Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "Victus Lüftersteuerung.lnk"
+    foreach ($item in @(@($startupLnk, "-m victus_fan gui --hidden"), @($menuLnk, "-m victus_fan gui"))) {
+        $lnk = $shell.CreateShortcut($item[0])
+        $lnk.TargetPath = $venvPythonw
+        $lnk.Arguments = $item[1]
+        $lnk.WorkingDirectory = $InstallDir
+        $lnk.IconLocation = $iconFile
+        $lnk.Description = "Victus Lüftersteuerung"
+        $lnk.Save()
+    }
+
+    # --- Hardware prüfen (nur bei manueller Installation) ----------------
+    if (-not $SkipDiagnose -and -not $Unattended) {
+        Step "Prüfe Hardware-Unterstützung"
+        if ((Invoke-Native $venvPython @("-m", "victus_fan", "diagnose")) -ne 0) {
+            throw "Diagnose fehlgeschlagen - Dienst wird nicht eingerichtet. Details siehe oben."
+        }
+    }
+
+    # --- Geplante Aufgabe: Lüftersteuerung -------------------------------
+    Step "Richte Hintergrunddienst '$TaskName' ein"
+    $taskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $action   = New-ScheduledTaskAction -Execute $venvPythonw -Argument "-m victus_fan run" -WorkingDirectory $InstallDir
+    $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
+        -StartWhenAvailable -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger (New-ScheduledTaskTrigger -AtStartup) `
+        -Principal $taskPrincipal -Settings $settings -Force `
+        -Description "Intelligente Lüftersteuerung für HP Victus" | Out-Null
+    $serviceRegistered = $true
+
+    # --- Geplante Aufgabe: Auto-Update -----------------------------------
+    Step "Richte Auto-Update '$UpdateTask' ein"
+    $updAction  = New-ScheduledTaskAction -Execute $venvPythonw -Argument "-m victus_fan update --auto" -WorkingDirectory $InstallDir
+    $atStartup  = New-ScheduledTaskTrigger -AtStartup
+    $atStartup.Delay = "PT10M"
+    $repeat     = New-ScheduledTaskTrigger -Once -At (Get-Date).AddHours(6) -RepetitionInterval (New-TimeSpan -Hours 6)
+    $updSettings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RunOnlyIfNetworkAvailable `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $UpdateTask -Action $updAction -Trigger @($atStartup, $repeat) `
+        -Principal $taskPrincipal -Settings $updSettings -Force `
+        -Description "Sucht nach Updates der Victus-Lüftersteuerung und installiert sie" | Out-Null
+
+    # --- Installierten Stand merken (Updater + Tray-Neustart) ------------
+    $version = Get-NativeOutput $venvPython @("-c", "import victus_fan; print(victus_fan.__version__)")
+    [ordered]@{
+        version      = "$version"
+        sha          = $SourceSha
+        branch       = $SourceBranch
+        installed_at = (Get-Date -Format "yyyy-MM-dd HH:mm")
+        source       = $(if ($Unattended) { "auto-update" } else { "manuell" })
+    } | ConvertTo-Json | Set-Content -Path (Join-Path $InstallDir "installed.json") -Encoding UTF8
+}
+finally {
+    # Die Lüftersteuerung immer wieder starten - auch wenn ein Update scheitert.
+    if ($serviceRegistered -or (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) {
+        Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     }
 }
 
-# --- Geplante Aufgabe -----------------------------------------------------
-Step "Richte Hintergrunddienst '$TaskName' ein"
-$action   = New-ScheduledTaskAction -Execute $venvPythonw -Argument "-m victus_fan run" -WorkingDirectory $InstallDir
-$triggers = @(New-ScheduledTaskTrigger -AtStartup)
-$taskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet `
-    -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -ExecutionTimeLimit ([TimeSpan]::Zero) `
-    -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
-    -StartWhenAvailable -MultipleInstances IgnoreNew
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers `
-    -Principal $taskPrincipal -Settings $settings -Force `
-    -Description "Intelligente Lüftersteuerung für HP Victus" | Out-Null
-Start-ScheduledTask -TaskName $TaskName
+if ($Unattended) {
+    Write-Host "Update installiert."
+    exit 0
+}
 
 Start-Sleep -Seconds 5
 # Tray-Icon im Kontext des angemeldeten Benutzers (nicht als Admin) starten
 Start-Process explorer.exe -ArgumentList "`"$menuLnk`""
 Step "Fertig"
-& $venvPython -m victus_fan status
+$null = Invoke-Native $venvPython @("-m", "victus_fan", "status")
 Write-Host ""
 Write-Host "Die Lüftersteuerung läuft jetzt im Hintergrund und startet automatisch mit Windows."
 Write-Host "Das Tray-Icon (unten rechts, ggf. unter '^') zeigt die höchste Temperatur;"
 Write-Host "Klick darauf öffnet das Fenster, Rechtsklick das Menü."
+Write-Host "Updates werden automatisch installiert (beim Start und alle 6 Stunden)."
 Write-Host "Befehle (neue Konsole):  victus-fan status | victus-fan profile quiet|balanced|performance|auto"
 Write-Host "Konfiguration:           $configFile"
 Write-Host "Log:                     $(Join-Path $DataDir 'victus-fan.log')"

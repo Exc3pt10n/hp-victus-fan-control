@@ -74,6 +74,15 @@ DEFAULTS: dict = {
         # zurück - deshalb regelmäßig erneut senden.
         "keepalive": 60.0,
     },
+    "update": {
+        # Automatisch nach Updates suchen und sie installieren.
+        "enabled": True,
+        # Nur prüfen und im Fenster anzeigen, nicht selbst installieren.
+        "check_only": False,
+        "repo": "Exc3pt10n/hp-victus-fan-control",
+        # Leer = Standard-Branch des Repositories.
+        "branch": "",
+    },
     "toggle": {
         # Für Geräte, die nur "Max an/aus" können.
         "engage_percent": 80.0,
@@ -119,6 +128,10 @@ class Config:
     @property
     def windows(self) -> dict:
         return self.raw["windows"]
+
+    @property
+    def update(self) -> dict:
+        return self.raw["update"]
 
     @property
     def toggle(self) -> dict:
