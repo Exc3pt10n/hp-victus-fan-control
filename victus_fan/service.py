@@ -22,6 +22,10 @@ log = logging.getLogger(__name__)
 FAN_MODE_CHAIN = ("default", "cool", "performance")
 
 
+def _round(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
+
+
 class FanService:
     def __init__(self, config: Config, backend: FanBackend, status_file: Path | None = None,
                  override_file: Path | None = None, dry_run: bool = False):
@@ -118,7 +122,7 @@ class FanService:
         now = time.monotonic()
         b = self.backend
         on_battery = b.on_battery()
-        reading = Reading(b.read_cpu_temp(), b.read_gpu_temp(), on_battery)
+        reading = Reading(_round(b.read_cpu_temp()), _round(b.read_gpu_temp()), on_battery)
         override = self._override()
         mode = override["mode"]
         if mode != "paused" and not self._paused:

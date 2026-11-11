@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "1.6.0"
 description = "Intelligente Lüftersteuerung für HP-Victus-Notebooks (Windows 11 / Linux)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
     "pywin32>=306; sys_platform == 'win32'",
     "pystray>=0.19; sys_platform == 'win32'",

@@ -45,6 +45,10 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 
 function Step($text) { Write-Host "`n==> $text" -ForegroundColor Cyan }
 
+# Python gibt UTF-8 aus - die Konsole soll es auch so lesen (sonst kaputte Umlaute).
+$env:PYTHONIOENCODING = "utf-8"
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
 # Externe Programme aufrufen, ohne dass Ausgaben auf stderr (z. B. pip-Warnungen)
 # unter Windows PowerShell 5.1 als Fehler gewertet werden.
 # Invoke-Native: Ausgabe -> Konsole, Rückgabe = nur der Exit-Code.

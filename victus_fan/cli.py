@@ -29,6 +29,10 @@ def _setup_logging(level: str, log_file: Path | None) -> None:
                         handlers=handlers or [logging.NullHandler()])
 
 
+def _r(value):
+    return None if value is None else round(value, 1)
+
+
 def cmd_run(args) -> int:
     from .service import FanService
 
@@ -127,8 +131,8 @@ def cmd_diagnose(args) -> int:
         return 1
     info = backend.describe()
     info.update(
-        cpu_temp=backend.read_cpu_temp(),
-        gpu_temp=backend.read_gpu_temp(),
+        cpu_temp=_r(backend.read_cpu_temp()),
+        gpu_temp=_r(backend.read_gpu_temp()),
         on_battery=backend.on_battery(),
         fan_rpm=backend.read_fan_rpm(),
     )
@@ -220,7 +224,18 @@ def cmd_curve(args) -> int:
     return 0
 
 
+def _utf8_console() -> None:
+    # Umlaute korrekt ausgeben, auch wenn die Ausgabe umgeleitet wird
+    # (PowerShell erwartet sonst eine andere Codepage).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_console()
     parser = argparse.ArgumentParser(prog="victus-fan", description="Intelligente Lüftersteuerung für HP Victus")
     parser.add_argument("--version", action="version", version=__version__)
     parser.add_argument("-c", "--config", default=str(paths.CONFIG_FILE), help="Pfad zur config.toml")
