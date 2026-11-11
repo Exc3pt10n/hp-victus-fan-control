@@ -40,6 +40,15 @@ class Decision:
 
 class FanController:
     def __init__(self, control: dict, critical_temp: float):
+        self.configure(control, critical_temp)
+        self.percent = 0.0
+        self._cpu: float | None = None
+        self._gpu: float | None = None
+        self._lower_since: float | None = None
+        self._last_time: float | None = None
+
+    def configure(self, control: dict, critical_temp: float) -> None:
+        """Parameter setzen; der aktuelle Zustand bleibt erhalten."""
         self.smoothing_up = float(control["smoothing_up"])
         self.smoothing_down = float(control["smoothing_down"])
         self.hysteresis = float(control["hysteresis"])
@@ -48,12 +57,6 @@ class FanController:
         self.ramp_down_rate = float(control["ramp_down_rate"])
         self.min_running = float(control["min_running_percent"])
         self.critical_temp = float(critical_temp)
-
-        self.percent = 0.0
-        self._cpu: float | None = None
-        self._gpu: float | None = None
-        self._lower_since: float | None = None
-        self._last_time: float | None = None
 
     def _smooth(self, prev: float | None, value: float | None) -> float | None:
         if value is None:

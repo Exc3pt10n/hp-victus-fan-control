@@ -13,6 +13,7 @@ from . import __version__, paths
 from .backends import BackendError, create_backend
 from .config import load_config
 from .controller import interpolate
+from .state import MODES, read_status, write_override
 
 
 def _setup_logging(level: str, log_file: Path | None) -> None:
@@ -43,16 +44,18 @@ def cmd_run(args) -> int:
 
 
 def cmd_status(args) -> int:
-    try:
-        status = json.loads(paths.STATUS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    status = read_status()
+    if status is None:
         print("Kein Status gefunden - läuft der Dienst?")
         return 1
     if args.json:
         print(json.dumps(status, indent=2, ensure_ascii=False))
         return 0
     rpm = ", ".join(f"{r} U/min" for r in status.get("fan_rpm") or []) or "-"
-    print(f"Stand:        {status['time']}{'  (Testlauf)' if status.get('dry_run') else ''}")
+    note = "  (VERALTET - Dienst läuft nicht?)" if status["stale"] else ""
+    note += "  (Testlauf)" if status.get("dry_run") else ""
+    print(f"Stand:        {status['time']}{note}")
+    print(f"Modus:        {status.get('mode', 'normal')}")
     print(f"Backend:      {status['backend']}")
     print(f"Profil:       {status['profile']} ({status['profile_reason']})")
     print(f"CPU:          {status['cpu_temp']} °C (geglättet {status['cpu_smoothed']})")
@@ -69,14 +72,30 @@ def cmd_profile(args) -> int:
         print(f"Unbekanntes Profil. Verfügbar: auto, {', '.join(cfg.raw['profiles'])}")
         return 2
     try:
-        paths.OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        paths.OVERRIDE_FILE.write_text(json.dumps({"profile": args.name}), encoding="utf-8")
+        write_override(profile=args.name)
     except OSError as exc:
         print(f"Konnte {paths.OVERRIDE_FILE} nicht schreiben: {exc}")
         return 1
     print("Automatische Profilwahl (Netz/Akku) aktiv." if args.name == "auto"
           else f"Profil '{args.name}' aktiv (zurück mit: victus-fan profile auto).")
     return 0
+
+
+def cmd_mode(args) -> int:
+    try:
+        write_override(mode=args.name)
+    except OSError as exc:
+        print(f"Konfiguration nicht schreibbar: {exc}")
+        return 1
+    print({"normal": "Intelligente Steuerung aktiv.",
+           "max": "Lüfter laufen auf voller Drehzahl (zurück mit: victus-fan mode normal).",
+           "paused": "Pausiert - das BIOS regelt (zurück mit: victus-fan mode normal)."}[args.name])
+    return 0
+
+
+def cmd_gui(args) -> int:
+    from .gui import main as gui_main
+    return gui_main(show=not args.hidden, config_path=args.config)
 
 
 def cmd_diagnose(args) -> int:
@@ -147,6 +166,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("profile", help="Profil festlegen: quiet | balanced | performance | auto")
     p.add_argument("name")
     p.set_defaults(func=cmd_profile)
+
+    p = sub.add_parser("mode", help="Modus: normal | max (volle Drehzahl) | paused (BIOS regelt)")
+    p.add_argument("name", choices=MODES)
+    p.set_defaults(func=cmd_mode)
+
+    p = sub.add_parser("gui", help="Tray-Icon und Fenster starten")
+    p.add_argument("--hidden", action="store_true", help="nur Tray-Icon, Fenster nicht öffnen")
+    p.set_defaults(func=cmd_gui)
 
     p = sub.add_parser("diagnose", help="Hardware-Unterstützung prüfen")
     p.add_argument("--backend", choices=["auto", "windows", "linux", "simulate"])

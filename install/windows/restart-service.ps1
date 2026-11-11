@@ -6,7 +6,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 }
 Stop-ScheduledTask -TaskName VictusFanControl -ErrorAction SilentlyContinue
 Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe'" |
-    Where-Object { $_.CommandLine -like "*victus_fan*" } |
+    Where-Object { $_.CommandLine -like "*victus_fan run*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-ScheduledTask -TaskName VictusFanControl
 Write-Host "Victus-Lüftersteuerung neu gestartet."

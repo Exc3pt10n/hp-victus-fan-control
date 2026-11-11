@@ -32,6 +32,12 @@ if (Test-Path $venvPython) {
     & $venvPython -m victus_fan restore
 }
 
+foreach ($lnk in @(
+    (Join-Path ([Environment]::GetFolderPath("CommonStartup")) "Victus Lüftersteuerung.lnk"),
+    (Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "Victus Lüftersteuerung.lnk"))) {
+    Remove-Item -Force $lnk -ErrorAction SilentlyContinue
+}
+
 $binDir = Join-Path $InstallDir "bin"
 $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $newPath = (($machinePath -split ";") | Where-Object { $_ -and $_ -ne $binDir }) -join ";"

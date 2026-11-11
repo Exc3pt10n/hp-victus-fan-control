@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from victus_fan.backends.base import FanBackend
-from victus_fan.config import Config
+from victus_fan.config import Config, load_config
 from victus_fan.service import FanService
 
 
@@ -75,6 +75,39 @@ class ServiceTest(unittest.TestCase):
         b = FakeBackend()
         FanService(Config(), b, dry_run=True).step()
         self.assertEqual(b.calls, [])
+
+    def test_modes_paused_and_max(self):
+        with tempfile.TemporaryDirectory() as d:
+            override = Path(d) / "override.json"
+            b = FakeBackend()
+            s = FanService(Config(), b, override_file=override)
+            override.write_text(json.dumps({"mode": "max"}))
+            self.assertEqual(s.step()["output"], "MAX")
+            self.assertEqual(b.calls[-1], ("max", True))
+            override.write_text(json.dumps({"mode": "paused"}))
+            self.assertEqual(s.step()["output"], "BIOS")
+            self.assertEqual(b.calls[-1], ("restore",))
+            n = len(b.calls)
+            s.step()
+            self.assertEqual(len(b.calls), n)  # pausiert: nichts senden
+            override.write_text(json.dumps({"mode": "normal"}))
+            s.step()
+            self.assertEqual(b.calls[-1][0], "level")
+
+    def test_config_reload(self):
+        import os
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = Path(d) / "config.toml"
+            cfg_path.write_text("[general]\ncritical_temp = 92.0\n")
+            s = FanService(load_config(cfg_path), FakeBackend())
+            cfg_path.write_text("[general]\ncritical_temp = 80.0\n")
+            os.utime(cfg_path, (1, 1))
+            s.step()
+            self.assertEqual(s.controller.critical_temp, 80.0)
+            cfg_path.write_text("[general]\nprofile = 'gibtsnicht'\n")
+            os.utime(cfg_path, (2, 2))
+            s.step()  # fehlerhafte Konfiguration -> alte bleibt
+            self.assertEqual(s.controller.critical_temp, 80.0)
 
 
 if __name__ == "__main__":

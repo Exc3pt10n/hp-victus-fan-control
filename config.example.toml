@@ -1,6 +1,6 @@
 # Konfiguration der Victus-Lüftersteuerung
 # Windows: C:\ProgramData\VictusFan\config.toml
-# Nach Änderungen den Dienst neu starten (siehe README).
+# Änderungen werden nach dem Speichern automatisch übernommen.
 # Alles, was hier fehlt, nimmt den eingebauten Standardwert.
 
 [general]

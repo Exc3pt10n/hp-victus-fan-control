@@ -10,19 +10,11 @@ import time
 from pathlib import Path
 
 from .backends import BackendError, FanBackend
-from .config import Config
+from .config import Config, load_config
 from .controller import FanController, Reading, ToggleAdapter
+from .state import DEFAULT_OVERRIDE, read_override
 
 log = logging.getLogger(__name__)
-
-
-def read_override(path: Path) -> str | None:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        profile = data.get("profile")
-        return profile if profile and profile != "auto" else None
-    except (OSError, ValueError, AttributeError):
-        return None
 
 
 class FanService:
@@ -41,19 +33,49 @@ class FanService:
         self._last_sent_at = 0.0
         self._platform_profile: str | None = None
         self._errors = 0
+        self._paused = False
+        self._config_mtime = self._mtime()
 
     # ------------------------------------------------------------------
-    def active_profile_name(self, on_battery: bool) -> tuple[str, str]:
-        override = read_override(self.override_file) if self.override_file else None
-        if override and override in self.config.raw["profiles"]:
-            return override, "manuell"
+    def _mtime(self) -> float | None:
+        try:
+            return self.config.path.stat().st_mtime if self.config.path else None
+        except OSError:
+            return None
+
+    def reload_config_if_changed(self) -> None:
+        """Übernimmt Änderungen an der config.toml ohne Neustart."""
+        mtime = self._mtime()
+        if mtime is None or mtime == self._config_mtime:
+            return
+        self._config_mtime = mtime
+        try:
+            new = load_config(self.config.path)
+        except Exception as exc:  # noqa: BLE001
+            log.error("Konfiguration fehlerhaft, behalte die alte: %s", exc)
+            return
+        self.config = new
+        self.controller.configure(new.control, new.general["critical_temp"])
+        self.toggle.engage = float(new.toggle["engage_percent"])
+        self.toggle.release = float(new.toggle["release_percent"])
+        log.info("Konfiguration neu geladen")
+
+    def _override(self) -> dict:
+        return read_override(self.override_file) if self.override_file else dict(DEFAULT_OVERRIDE)
+
+    def active_profile_name(self, on_battery: bool, override: dict | None = None) -> tuple[str, str]:
+        wanted = (override or self._override())["profile"]
+        if wanted != "auto" and wanted in self.config.raw["profiles"]:
+            return wanted, "manuell"
         if on_battery:
             return self.config.general["battery_profile"], "Akku"
         return self.config.general["profile"], "Netz"
 
-    def _apply(self, percent: float, critical: bool, now: float) -> str:
+    def _apply(self, percent: float, critical: bool, now: float, force_max: bool = False) -> str:
         b = self.backend
-        if b.supports_level and not critical:
+        if force_max:
+            command = ("max", True)
+        elif b.supports_level and not critical:
             command = ("level", round(percent))
         elif b.supports_level and critical:
             command = ("max", True)
@@ -76,11 +98,14 @@ class FanService:
         return f"{command[1]} %" if command[0] == "level" else ("MAX" if command[1] else "Auto")
 
     def step(self) -> dict:
+        self.reload_config_if_changed()
         now = time.monotonic()
         b = self.backend
         on_battery = b.on_battery()
         reading = Reading(b.read_cpu_temp(), b.read_gpu_temp(), on_battery)
-        name, reason = self.active_profile_name(on_battery)
+        override = self._override()
+        mode = override["mode"]
+        name, reason = self.active_profile_name(on_battery, override)
         profile = self.config.profile(name)
 
         if (self.config.general.get("switch_platform_profile") and profile.platform_profile
@@ -88,11 +113,27 @@ class FanService:
             b.set_platform_profile(profile.platform_profile)
             self._platform_profile = profile.platform_profile
 
+        # Der Regler läuft immer mit, damit die Glättung beim Fortsetzen stimmt.
         decision = self.controller.update(reading, profile, now)
-        output = self._apply(decision.percent, decision.critical, now)
+        if mode == "paused":
+            if not self._paused:
+                log.info("Pausiert - Lüfter laufen in der BIOS-Automatik")
+                if not self.dry_run:
+                    b.restore_auto()
+                self._paused = True
+                self._last_sent = None
+            output = "BIOS"
+        else:
+            if self._paused:
+                log.info("Steuerung fortgesetzt")
+                self._paused = False
+            output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
         status = {
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": time.time(),
+            "mode": mode,
+            "supports_level": b.supports_level,
             "backend": b.name,
             "profile": name,
             "profile_reason": reason,

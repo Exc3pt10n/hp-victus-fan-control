@@ -91,6 +91,10 @@ $venvPythonw = Join-Path $venv "Scripts\pythonw.exe"
 & $venvPython -m pip install --upgrade --quiet pip
 & $venvPython -m pip install --upgrade --quiet "$RepoDir"
 if ($LASTEXITCODE -ne 0) { throw "pip install fehlgeschlagen" }
+& $venvPython -c "import tkinter" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "tkinter fehlt in dieser Python-Installation - das Fenster der Oberfläche wird nicht funktionieren. Python von python.org mit 'tcl/tk and IDLE' installieren."
+}
 
 # --- Konfiguration --------------------------------------------------------
 Step "Konfiguration in $DataDir"
@@ -106,6 +110,9 @@ if (-not (Test-Path $configFile)) {
 $override = Join-Path $DataDir "override.json"
 if (-not (Test-Path $override)) { Set-Content -Path $override -Value '{"profile": "auto"}' -Encoding UTF8 }
 icacls $override /grant "*S-1-5-32-545:(M)" | Out-Null   # VORDEFINIERT\Benutzer
+# Die Oberfläche öffnet die Konfiguration im Editor - Speichern ohne Adminrechte erlauben.
+# Der Dienst übernimmt Änderungen automatisch (kein Neustart nötig).
+icacls $configFile /grant "*S-1-5-32-545:(M)" | Out-Null
 
 # --- Befehl "victus-fan" bereitstellen -----------------------------------
 $binDir = Join-Path $InstallDir "bin"
@@ -115,6 +122,23 @@ $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 if (($machinePath -split ";") -notcontains $binDir) {
     [Environment]::SetEnvironmentVariable("Path", "$machinePath;$binDir", "Machine")
     Write-Host "$binDir zum PATH hinzugefügt (neue Konsole öffnen)"
+}
+
+# --- Tray-Icon: Autostart bei Anmeldung + Startmenü ----------------------
+Step "Richte Tray-Icon und Startmenü-Eintrag ein"
+$iconFile = Join-Path $InstallDir "victus-fan.ico"
+& $venvPython -c "import sys; from victus_fan.gui import make_fan_image; make_fan_image(256).save(sys.argv[1], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])" $iconFile
+$shell = New-Object -ComObject WScript.Shell
+$startupLnk = Join-Path ([Environment]::GetFolderPath("CommonStartup")) "Victus Lüftersteuerung.lnk"
+$menuLnk    = Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "Victus Lüftersteuerung.lnk"
+foreach ($item in @(@($startupLnk, "-m victus_fan gui --hidden"), @($menuLnk, "-m victus_fan gui"))) {
+    $lnk = $shell.CreateShortcut($item[0])
+    $lnk.TargetPath = $venvPythonw
+    $lnk.Arguments = $item[1]
+    $lnk.WorkingDirectory = $InstallDir
+    $lnk.IconLocation = $iconFile
+    $lnk.Description = "Victus Lüftersteuerung"
+    $lnk.Save()
 }
 
 # --- Hardware prüfen -----------------------------------------------------
@@ -142,10 +166,14 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers `
 Start-ScheduledTask -TaskName $TaskName
 
 Start-Sleep -Seconds 5
+# Tray-Icon im Kontext des angemeldeten Benutzers (nicht als Admin) starten
+Start-Process explorer.exe -ArgumentList "`"$menuLnk`""
 Step "Fertig"
 & $venvPython -m victus_fan status
 Write-Host ""
 Write-Host "Die Lüftersteuerung läuft jetzt im Hintergrund und startet automatisch mit Windows."
+Write-Host "Das Tray-Icon (unten rechts, ggf. unter '^') zeigt die höchste Temperatur;"
+Write-Host "Klick darauf öffnet das Fenster, Rechtsklick das Menü."
 Write-Host "Befehle (neue Konsole):  victus-fan status | victus-fan profile quiet|balanced|performance|auto"
 Write-Host "Konfiguration:           $configFile"
 Write-Host "Log:                     $(Join-Path $DataDir 'victus-fan.log')"

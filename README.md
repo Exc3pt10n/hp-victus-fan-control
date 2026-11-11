@@ -35,9 +35,41 @@ Der Installer
 - prüft mit `victus-fan diagnose`, ob die HP-BIOS-Schnittstelle erreichbar ist
   (bei einem Fehler wird **nichts** eingerichtet),
 - richtet die geplante Aufgabe **VictusFanControl** ein: startet mit Windows,
-  läuft ohne Fenster als SYSTEM, startet sich bei einem Absturz neu.
+  läuft ohne Fenster als SYSTEM, startet sich bei einem Absturz neu,
+- richtet das Tray-Icon für alle Benutzer im Autostart und im Startmenü ein.
 
-## Bedienung
+Für ein Update einfach die neue Version herunterladen und `install.cmd` erneut ausführen –
+deine `config.toml` bleibt erhalten.
+
+## Oberfläche und Tray-Icon
+
+![Fenster der Lüftersteuerung](docs/fenster.png)
+
+Nach der Installation erscheint unten rechts in der Taskleiste (ggf. hinter dem `^`) ein
+Icon mit der **höchsten aktuellen Temperatur** (CPU oder GPU):
+
+![Tray-Icons](docs/tray-icons.png)
+
+Grün unter 70 °C · Orange ab 70 °C · Rot ab 85 °C · Grau = pausiert · Lüftersymbol = Dienst läuft nicht.
+Fährt man mit der Maus darüber, zeigt der Tooltip CPU, GPU und Lüfter einzeln.
+
+- **Klick** öffnet das Fenster: aktuelle Werte, Verlauf der letzten 10 Minuten,
+  Profil- und Modusauswahl. Schließen (✕) blendet es nur aus.
+- **Rechtsklick** öffnet das Menü: Profil, Modus, Konfiguration, Log, Dienst neu starten.
+- Das Tray-Icon startet bei jeder Anmeldung automatisch; außerdem gibt es einen Eintrag
+  **Victus Lüftersteuerung** im Startmenü.
+
+| Modus | Bedeutung |
+|---|---|
+| **Intelligent** | Normale Regelung nach Profil und Kurve |
+| **Volle Drehzahl** | Lüfter dauerhaft auf Maximum (z. B. beim Rendern) |
+| **Pause (BIOS)** | Steuerung ruht, das BIOS regelt wie ab Werk |
+
+Die Oberfläche läuft mit normalen Benutzerrechten. Mit der Hardware spricht nur der
+Hintergrunddienst; die Oberfläche liest dessen Status und schreibt nur deine Auswahl.
+Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
+
+## Kommandozeile
 
 In einer neuen Eingabeaufforderung oder PowerShell:
 
@@ -49,7 +81,13 @@ victus-fan status
 victus-fan profile quiet
 ```
 
-Mögliche Profile: `quiet`, `balanced`, `performance` oder `auto` (= automatisch nach Netz/Akku).
+Profile: `quiet`, `balanced`, `performance` oder `auto` (= automatisch nach Netz/Akku).
+
+```bash
+victus-fan mode max
+```
+
+Modi: `normal`, `max`, `paused`.
 
 ```bash
 victus-fan curve balanced
@@ -57,13 +95,15 @@ victus-fan curve balanced
 
 | Datei | Zweck |
 |---|---|
-| `C:\ProgramData\VictusFan\config.toml` | Konfiguration (Kurven, Hysterese, Profile …) |
+| `C:\ProgramData\VictusFan\config.toml` | Konfiguration (Kurven, Hysterese, Profile …) – Änderungen gelten nach dem Speichern sofort |
 | `C:\ProgramData\VictusFan\victus-fan.log` | Log |
-| `install\windows\restart-service.cmd` | Dienst nach Änderung der Konfiguration neu starten |
+| `install\windows\restart-service.cmd` | Dienst neu starten |
 | `install\windows\uninstall.cmd` | Alles entfernen, Lüfter zurück ans BIOS |
 
 Alle Einstellungen sind in [`config.example.toml`](config.example.toml) kommentiert. Eigene
-Profile legst du als `[profiles.name]` mit `cpu_curve`/`gpu_curve` an.
+Profile legst du als `[profiles.name]` mit `cpu_curve`/`gpu_curve` an; sie erscheinen
+automatisch in der Oberfläche. Eine fehlerhafte Konfiguration wird ignoriert (siehe Log),
+die bisherige bleibt aktiv.
 
 ## Erster Test – bitte einmal durchführen
 
@@ -105,7 +145,14 @@ python -m unittest -v
 python -m victus_fan -c config.example.toml run --backend simulate -v
 ```
 
+Die Oberfläche benötigt `pip install .[gui]` (unter Windows automatisch enthalten).
+
+```bash
+python -m victus_fan -c config.example.toml gui
+```
+
 Aufbau: `victus_fan/controller.py` (Regelkern, hardwareunabhängig und getestet),
-`victus_fan/service.py` (Dienstschleife), `victus_fan/backends/` (Windows-BIOS, Linux, Simulation).
+`victus_fan/service.py` (Dienstschleife), `victus_fan/backends/` (Windows-BIOS, Linux, Simulation),
+`victus_fan/gui.py` (Tray-Icon und Fenster), `victus_fan/state.py` (Austausch Dienst ↔ Oberfläche).
 
 Lizenz: MIT
