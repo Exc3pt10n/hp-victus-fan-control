@@ -40,10 +40,22 @@ class WindowsBackendTest(unittest.TestCase):
         b.set_percent(50)
         self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [27, 26]))
 
-    def test_no_fan_mode_by_default(self):
-        b = make(mode="toggle")
-        self.assertNotIn(windows.SET_FAN_MODE, [c[0] for c in b.bios.calls])
-        self.assertFalse(b.supports_level)
+    def test_defaults_set_standard_mode(self):
+        b = make()
+        self.assertIn((windows.SET_FAN_MODE, [0xFF, 0x30]), b.bios.calls)
+        self.assertTrue(b.supports_level)
+        self.assertEqual(b.levels_for(100), [54, 52])
+
+    def test_toggle_mode(self):
+        self.assertFalse(make(mode="toggle").supports_level)
+
+    def test_bios_temperature_checked_only_once(self):
+        b = make()
+        with mock.patch.object(b, "_acpi_temp", return_value=45.0):
+            self.assertEqual(b.read_cpu_temp(), 45.0)
+            self.assertEqual(b.read_cpu_temp(), 45.0)
+        temp_calls = [c for c in b.bios.calls if c[0] == windows.GET_TEMP]
+        self.assertEqual(len(temp_calls), 1)
 
 
 if __name__ == "__main__":

@@ -146,14 +146,13 @@ class ConfigUpdateTest(unittest.TestCase):
             cfg = load_config(p)
             self.assertEqual(cfg.windows["mode"], "toggle")
             self.assertEqual(cfg.windows["max_level_cpu"], 49)
-            self.assertIn("# Eigene Kurven", p.read_text(encoding="utf-8"))
+            self.assertIn("# Eigene Profile", p.read_text(encoding="utf-8"))
             update_config_values(p, "neu", {"x": 1})
             self.assertIn("[neu]", p.read_text(encoding="utf-8"))
 
 
 class EscalationTest(unittest.TestCase):
     def test_tries_next_fan_mode_and_saves_it(self):
-        import os
         with tempfile.TemporaryDirectory() as d:
             cfg_path = Path(d) / "config.toml"
             cfg_path.write_text("[windows]\nmode = \"level\"\n", encoding="utf-8")
@@ -168,7 +167,8 @@ class EscalationTest(unittest.TestCase):
             with mock.patch("victus_fan.service.time.monotonic", side_effect=list(range(0, 400, 2))):
                 for _ in range(0, 400, 2):
                     status = s.step()
-            self.assertEqual(b.modes, ["default", "cool", "performance"])
+            # "default" ist Standard und schon gesetzt -> danach cool, performance
+            self.assertEqual(b.modes, ["cool", "performance"])
             self.assertIsNotNone(status["warning"])        # alle probiert -> Warnung
             self.assertEqual(load_config(cfg_path).windows["fan_mode"], "performance")
 

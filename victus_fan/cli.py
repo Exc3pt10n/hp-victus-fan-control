@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, paths
-from .backends import BackendError, create_backend
+from .backends import BACKENDS, BackendError, create_backend
 from .config import load_config
 from .controller import interpolate
 from .state import MODES, POWER_MODES, read_status, write_override
@@ -165,7 +165,7 @@ def cmd_selftest(args) -> int:
         return code
 
     cfg = load_config(args.config)
-    print("Hardware-Test der Lüftersteuerung (dauert ca. 2 Minuten).")
+    print("Hardware-Test der Lüftersteuerung (dauert ca. 1,5 Minuten).")
     print("Die Lüfter werden dabei hörbar schneller und langsamer.\n")
     try:
         backend = create_backend(args.backend or cfg.general["backend"], cfg)
@@ -176,7 +176,7 @@ def cmd_selftest(args) -> int:
 
     previous_mode = selftest.pause_service(print)
     try:
-        result = selftest.run(backend, settle=args.settle, extended=not args.quick)
+        result = selftest.run(backend, settle=args.settle)
     finally:
         try:
             write_override(mode=previous_mode)
@@ -288,7 +288,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("run", help="Steuerung starten (Vordergrund; der Dienst nutzt das auch)")
-    p.add_argument("--backend", choices=["auto", "windows", "linux", "simulate"])
+    p.add_argument("--backend", choices=BACKENDS)
     p.add_argument("--dry-run", action="store_true", help="nur messen und rechnen, nichts setzen")
     p.add_argument("--log-file")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -315,20 +315,19 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_gui)
 
     p = sub.add_parser("diagnose", help="Hardware-Unterstützung prüfen")
-    p.add_argument("--backend", choices=["auto", "windows", "linux", "simulate"])
+    p.add_argument("--backend", choices=BACKENDS)
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(func=cmd_diagnose)
 
     p = sub.add_parser("restore", help="Lüfter wieder dem BIOS überlassen (Max aus, Automatik)")
-    p.add_argument("--backend", choices=["auto", "windows", "linux", "simulate"])
+    p.add_argument("--backend", choices=BACKENDS)
     p.set_defaults(func=cmd_restore)
 
     p = sub.add_parser("selftest", help="Hardware-Test: prüfen, welche Lüfterbefehle wirklich wirken")
-    p.add_argument("--backend", choices=["auto", "windows", "linux", "simulate"])
+    p.add_argument("--backend", choices=BACKENDS)
     p.add_argument("--apply", action="store_true", help="Ergebnis in die config.toml übernehmen")
     p.add_argument("--settle", type=float, default=15.0, help="Wartezeit je Schritt in Sekunden")
     p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
-    p.add_argument("--quick", action="store_true", help="BIOS-Leistungsmodi nicht testen")
     p.set_defaults(func=cmd_selftest)
 
     p = sub.add_parser("update", help="nach Updates suchen und installieren (Adminrechte)")

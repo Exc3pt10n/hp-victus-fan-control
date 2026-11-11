@@ -4,14 +4,17 @@ from victus_fan import selftest
 
 
 class FakeBios:
-    """Verhält sich wie ein BIOS, das SetFanLevel annimmt, aber ignoriert."""
+    """Nachbau eines HP-BIOS: Max wirkt; feste Drehzahlen nur in ``level_modes``
+    (None = immer). Kleine Stufen hebt es ggf. auf ``floor`` an."""
 
-    def __init__(self, levels_work: bool, max_works: bool = True):
-        self.levels_work = levels_work
+    def __init__(self, level_modes=("default", "cool", "performance"), max_works=True, floor=0):
+        self.level_modes = level_modes
         self.max_works = max_works
-        self.max_cpu, self.max_gpu = 55, 57
+        self.floor = floor
+        self.max_cpu, self.max_gpu = 54, 52
+        self.fan_mode = None           # nach dem Systemstart: kein Modus gesetzt
+        self.mode_calls = []
         self.rpm = [2700, 0]
-        self.supports_level = True
 
     def read_fan_rpm(self):
         return list(self.rpm)
@@ -21,99 +24,77 @@ class FakeBios:
 
     def set_max(self, enabled):
         if self.max_works:
-            self.rpm = [5100, 5300] if enabled else [2700, 0]
-
-    def set_levels(self, levels):
-        if self.levels_work:
-            self.rpm = [lvl * 100 for lvl in levels]
-
-
-class FakeBiosWithModes(FakeBios):
-    """Wie das BIOS des Victus BV8D4EA: feste Drehzahlen wirken nur in
-    bestimmten Leistungsmodi; kleine Stufen hebt das BIOS ggf. an."""
-
-    def __init__(self, level_modes=("performance",), floor=0):
-        super().__init__(levels_work=False)
-        self.level_modes = level_modes
-        self.floor = floor
-        self.fan_mode = "default"
-        self.mode_calls = []
+            self.rpm = [5400, 5200] if enabled else [2700, 0]
 
     def set_fan_mode(self, name):
         self.fan_mode = name
         self.mode_calls.append(name)
-        self.rpm = [2200, 2100] if name in ("cool", "performance") else [2700, 0]
 
     def set_levels(self, levels):
-        if self.fan_mode in self.level_modes:
+        if self.level_modes is None or self.fan_mode in self.level_modes:
             self.rpm = [0 if lvl == 0 else max(self.floor, lvl) * 100 for lvl in levels]
 
 
+def run(bios):
+    return selftest.run(bios, settle=0, say=lambda *a, **k: None)
+
+
 class SelftestTest(unittest.TestCase):
-    def run_test(self, bios):
-        return selftest.run(bios, settle=0, say=lambda *a, **k: None)
-
-    def test_levels_ignored_recommends_toggle(self):
-        r = self.run_test(FakeBios(levels_work=False))
+    def test_victus_bv8d4ea(self):
+        # Wie gemessen: jeder gesetzte Modus schaltet frei -> "default" genügt.
+        bios = FakeBios()
+        r = run(bios)
         self.assertTrue(r.max_works)
-        self.assertFalse(r.level_works)
-        self.assertEqual(r.recommendation["mode"], "toggle")
-        self.assertEqual(r.recommendation["max_level_cpu"], 51)
-
-    def test_levels_work_recommends_level(self):
-        r = self.run_test(FakeBios(levels_work=True))
-        self.assertTrue(r.level_works)
-        self.assertEqual(r.recommendation["mode"], "level")
-        self.assertEqual(r.level_high_set, [43, 45])
-
-    def test_nothing_works(self):
-        r = self.run_test(FakeBios(levels_work=False, max_works=False))
-        self.assertNotIn("mode", r.recommendation)
-
-    def test_levels_only_in_performance_mode(self):
-        bios = FakeBiosWithModes(level_modes=("performance",))
-        r = self.run_test(bios)
-        self.assertFalse(r.level_works)
-        self.assertFalse(r.mode_levels["cool"]["works"])
-        self.assertTrue(r.mode_levels["performance"]["works"])
-        self.assertEqual(r.recommendation["mode"], "level")
-        self.assertEqual(r.recommendation["fan_mode"], "performance")
-        self.assertEqual(r.recommendation["min_level"], 0)
+        self.assertEqual(r.best_fan_mode, "default")
+        self.assertEqual(list(r.mode_levels), ["default"])   # bricht nach Erfolg ab
+        self.assertEqual(r.recommendation, {"mode": "level", "fan_mode": "default",
+                                            "max_level_cpu": 54, "max_level_gpu": 52, "min_level": 0})
         self.assertEqual(r.level_zero, [0, 0])
-        self.assertEqual(bios.mode_calls[-1], "default")  # zurückgesetzt
+        self.assertEqual(bios.mode_calls[-1], "default")     # am Ende zurückgesetzt
 
-    def test_cool_preferred_when_it_works(self):
-        r = self.run_test(FakeBiosWithModes(level_modes=("cool", "performance")))
-        self.assertEqual(r.recommendation["fan_mode"], "cool")
+    def test_falls_back_to_next_mode(self):
+        r = run(FakeBios(level_modes=("performance",)))
+        self.assertEqual(list(r.mode_levels), ["default", "cool", "performance"])
+        self.assertEqual(r.recommendation["fan_mode"], "performance")
 
-    def test_default_mode_preferred(self):
-        # Wie beim Victus BV8D4EA: jedes Setzen eines Modus schaltet frei.
-        r = self.run_test(FakeBiosWithModes(level_modes=("default", "cool", "performance")))
-        self.assertEqual(r.recommendation["fan_mode"], "default")
-
-    def test_levels_already_working_still_recommends_default(self):
-        bios = FakeBiosWithModes(level_modes=("default", "cool", "performance"))
-        bios.fan_mode = "performance"   # war vor dem Test schon gesetzt
-        r = self.run_test(bios)
-        self.assertTrue(r.level_works)
-        self.assertEqual(r.recommendation["fan_mode"], "default")
-
-    def test_floor_detected(self):
-        r = self.run_test(FakeBiosWithModes(floor=22))
-        self.assertEqual(r.level_min_test, [2200, 2200])
-        self.assertEqual(r.recommendation["min_level"], 22)
-
-    def test_modes_tested_but_levels_never_work(self):
-        r = self.run_test(FakeBiosWithModes(level_modes=()))
+    def test_toggle_when_levels_never_work(self):
+        r = run(FakeBios(level_modes=()))
         self.assertEqual(r.recommendation["mode"], "toggle")
-        self.assertEqual(r.recommendation["fan_mode"], "")
+        self.assertEqual(r.recommendation["fan_mode"], "default")
         self.assertNotIn("min_level", r.recommendation)
 
-    def test_quick_skips_modes(self):
-        bios = FakeBiosWithModes()
-        r = selftest.run(bios, settle=0, say=lambda *a, **k: None, extended=False)
-        self.assertEqual(bios.mode_calls, [])
-        self.assertEqual(r.recommendation["mode"], "toggle")
+    def test_floor_detected(self):
+        r = run(FakeBios(floor=22))
+        self.assertEqual(r.recommendation["min_level"], 22)
+
+    def test_nothing_works(self):
+        r = run(FakeBios(level_modes=(), max_works=False))
+        self.assertNotIn("mode", r.recommendation)
+
+    def test_backend_without_modes(self):
+        class NoModes:
+            """Backend ohne Leistungsmodi und ohne set_levels (wie die Simulation)."""
+            supports_level = True
+
+            def __init__(self):
+                self.rpm = [2000, 2000]
+
+            def read_fan_rpm(self):
+                return list(self.rpm)
+
+            def restore_auto(self):
+                self.rpm = [2000, 2000]
+
+            def set_max(self, enabled):
+                self.rpm = [5400, 5200] if enabled else [2000, 2000]
+
+            def set_percent(self, percent):
+                self.rpm = [int(percent * 100)] * 2
+
+        r = run(NoModes())
+        self.assertEqual(list(r.mode_levels), ["-"])
+        self.assertEqual(r.recommendation["mode"], "level")
+        self.assertNotIn("fan_mode", r.recommendation)
 
 if __name__ == "__main__":
     unittest.main()

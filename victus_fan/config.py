@@ -17,17 +17,14 @@ DEFAULT_PROFILES: dict[str, dict] = {
     "quiet": {
         "cpu_curve": [[0, 0], [49, 0], [55, 20], [65, 30], [75, 50], [85, 75], [92, 100]],
         "gpu_curve": [[0, 0], [46, 0], [52, 20], [62, 30], [72, 50], [80, 75], [87, 100]],
-        "platform_profile": "quiet",
     },
     "balanced": {
         "cpu_curve": [[0, 20], [50, 20], [60, 30], [70, 50], [80, 75], [88, 100]],
         "gpu_curve": [[0, 20], [47, 20], [57, 30], [67, 50], [76, 75], [84, 100]],
-        "platform_profile": "balanced",
     },
     "performance": {
         "cpu_curve": [[0, 30], [45, 30], [55, 45], [65, 65], [75, 85], [82, 100]],
         "gpu_curve": [[0, 30], [42, 30], [52, 45], [62, 65], [70, 85], [77, 100]],
-        "platform_profile": "performance",
     },
 }
 
@@ -41,10 +38,8 @@ DEFAULTS: dict = {
         "interval": 2.0,
         # Ab dieser (ungeglätteten) Temperatur sofort Maximaldrehzahl.
         "critical_temp": 92.0,
-        # Backend: "auto", "windows", "linux" oder "simulate".
-        "backend": "auto",
-        # Plattform-/Leistungsprofil des Notebooks mit umschalten (Linux).
-        "switch_platform_profile": False,
+        # Backend: "windows" oder "simulate" (Test ohne Hardware).
+        "backend": "windows",
         "log_level": "INFO",
     },
     "control": {
@@ -63,23 +58,24 @@ DEFAULTS: dict = {
         "min_running_percent": 20.0,
     },
     "windows": {
-        # "auto": Drehzahlsteuerung testen, sonst Max-Umschaltung.
-        # "level": nur Drehzahlstufen, "toggle": nur Max an/aus.
-        "mode": "auto",
-        # Leistungsmodus des BIOS, der beim Start gesetzt wird:
-        # "" (nicht ändern), "default", "performance" oder "cool".
-        # Manche BIOS setzen feste Drehzahlen nur im Modus "performance" um.
-        "fan_mode": "",
-        # Quelle der CPU-Temperatur: "auto" (HP-BIOS, sonst ACPI) oder eine id aus
-        # "victus-fan sensors" (z. B. "perf:\\_TZ.CPUZ" oder "lhm:/amdcpu/0/temperature/2").
+        # Die Standardwerte sind die Messwerte des Victus BV8D4EA (Hardware-Test).
+        # "level" = stufenlose Drehzahl, "toggle" = nur Max an/aus (Notlösung,
+        # falls ein BIOS feste Drehzahlen ignoriert).
+        "mode": "level",
+        # BIOS-Leistungsmodus, der beim Start gesetzt wird: "default", "cool"
+        # oder "performance". Das BIOS setzt feste Drehzahlen erst um, nachdem
+        # ein Leistungsmodus gesetzt wurde - "default" ändert die Leistung nicht.
+        "fan_mode": "default",
+        # Quelle der CPU-Temperatur: "auto" (HP-BIOS, sonst wärmste ACPI-Zone)
+        # oder eine id aus "victus-fan sensors", z. B. "perf:\\_TZ.THRM".
         "cpu_sensor": "auto",
         # Kleinste Stufe > 0, die das BIOS wirklich umsetzt (0 = keine Grenze).
         "min_level": 0,
-        # Maximale Lüfterstufe in 100 U/min (55 = 5500 U/min).
-        "max_level_cpu": 55,
-        "max_level_gpu": 57,
-        # Das BIOS fällt nach ca. 120 s ohne Befehl in den Automatikmodus
-        # zurück - deshalb regelmäßig erneut senden.
+        # Maximale Lüfterstufe in 100 U/min (54 = 5400 U/min).
+        "max_level_cpu": 54,
+        "max_level_gpu": 52,
+        # Das BIOS fällt nach ca. 120 s ohne Befehl in seine Automatik zurück -
+        # deshalb regelmäßig erneut senden.
         "keepalive": 60.0,
     },
     "update": {
@@ -92,7 +88,7 @@ DEFAULTS: dict = {
         "branch": "",
     },
     "toggle": {
-        # Für Geräte, die nur "Max an/aus" können.
+        # Nur für mode = "toggle": Max an ab/aus unter diesem Bedarf.
         "engage_percent": 80.0,
         "release_percent": 55.0,
         # Max bleibt mindestens so viele Sekunden an.
@@ -117,7 +113,6 @@ class Profile:
     name: str
     cpu_curve: list[tuple[float, float]]
     gpu_curve: list[tuple[float, float]]
-    platform_profile: str | None = None
 
 
 @dataclass
@@ -154,7 +149,6 @@ class Config:
             name=name,
             cpu_curve=_validate_curve(p["cpu_curve"], f"{name}.cpu_curve"),
             gpu_curve=_validate_curve(p.get("gpu_curve", p["cpu_curve"]), f"{name}.gpu_curve"),
-            platform_profile=p.get("platform_profile"),
         )
 
 

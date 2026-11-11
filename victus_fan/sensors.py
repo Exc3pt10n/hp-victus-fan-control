@@ -13,7 +13,6 @@ import multiprocessing
 import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from statistics import mean
 from typing import Callable
 
@@ -57,17 +56,16 @@ def _query(svc, wql: str) -> list:
 def _windows_sensors(bios) -> list[Sensor]:
     sensors: list[Sensor] = []
 
-    # 1) HP-BIOS: GetTemp mit verschiedenen Parametern
+    # 1) HP-BIOS (liefert beim Victus BV8D4EA nichts, bei anderen Modellen schon)
     if bios is not None:
         from .backends.windows import GET_TEMP
 
-        for arg in (0x00, 0x01, 0x02, 0x03):
-            def read_bios(arg=arg):
-                try:
-                    return _valid(bios.call(GET_TEMP, [arg])[0])
-                except Exception:  # noqa: BLE001
-                    return None
-            sensors.append(Sensor(f"bios:{arg}", f"HP-BIOS GetTemp[{arg}]", read_bios))
+        def read_bios():
+            try:
+                return _valid(bios.call(GET_TEMP, [0x01])[0])
+            except Exception:  # noqa: BLE001
+                return None
+        sensors.append(Sensor("bios", "HP-BIOS", read_bios))
 
     # 2) ACPI-Thermalzonen über root\wmi (oft nur selten aktualisiert)
     try:
@@ -120,37 +118,10 @@ def _windows_sensors(bios) -> list[Sensor]:
     return sensors
 
 
-# --------------------------------------------------------------------------
-# Linux
-# --------------------------------------------------------------------------
-def _linux_sensors() -> list[Sensor]:
-    sensors = []
-    for hw in sorted(Path("/sys/class/hwmon").glob("hwmon*")):
-        try:
-            chip = (hw / "name").read_text().strip()
-        except OSError:
-            continue
-        for inp in sorted(hw.glob("temp*_input")):
-            label_file = inp.with_name(inp.name.replace("_input", "_label"))
-            try:
-                label = label_file.read_text().strip()
-            except OSError:
-                label = inp.name
-
-            def read_hwmon(inp=inp):
-                try:
-                    return _valid(int(inp.read_text()) / 1000)
-                except (OSError, ValueError):
-                    return None
-            sensors.append(Sensor(f"hwmon:{chip}/{inp.name}", f"{chip} {label}", read_hwmon,
-                                  gpu=chip in ("amdgpu", "nouveau")))
-    return sensors
-
-
 def discover(bios=None) -> dict[str, Sensor]:
     from .backends.base import _gpu
 
-    found = _windows_sensors(bios) if sys.platform == "win32" else _linux_sensors()
+    found = _windows_sensors(bios) if sys.platform == "win32" else []
     found.append(Sensor("nvidia-smi", "NVIDIA GPU (nvidia-smi)", _gpu.read, gpu=True))
     # Nur Quellen behalten, die tatsächlich etwas liefern.
     return {s.id: s for s in found if s.read() is not None}

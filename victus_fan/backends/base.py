@@ -47,9 +47,6 @@ class FanBackend(ABC):
     def reconfigure(self, settings: dict) -> None:
         """Backend-spezifische Einstellungen zur Laufzeit übernehmen."""
 
-    def set_platform_profile(self, profile: str) -> None:
-        """Optional: Leistungsprofil des Notebooks setzen."""
-
     @abstractmethod
     def restore_auto(self) -> None:
         """Steuerung an das BIOS/die Firmware zurückgeben."""

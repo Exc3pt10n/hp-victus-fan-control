@@ -126,17 +126,19 @@ def make_tray_image(temp: float | None, mode: str, running: bool):
 # --------------------------------------------------------------------------
 # Systemaktionen
 # --------------------------------------------------------------------------
+NOT_WINDOWS = "Nur unter Windows verfügbar."
+
+
 def open_file(path: Path) -> None:
-    if sys.platform == "win32":
-        subprocess.Popen(["notepad.exe", str(path)])
-    else:
-        subprocess.Popen(["xdg-open", str(path)])
+    if sys.platform != "win32":
+        raise OSError(NOT_WINDOWS)
+    subprocess.Popen(["notepad.exe", str(path)])
 
 
 def run_elevated_console(config_path: Path, command: str) -> None:
     """Startet einen victus-fan-Befehl in einem sichtbaren Konsolenfenster als Administrator."""
     if sys.platform != "win32":
-        raise OSError(f"Bitte im Terminal ausführen: sudo victus-fan {command}")
+        raise OSError(NOT_WINDOWS)
     import ctypes
 
     exe = Path(sys.executable)
@@ -155,7 +157,7 @@ def run_selftest(config_path: Path) -> None:
 def start_update_check() -> None:
     """Startet die Update-Aufgabe sofort (fragt nach Administratorrechten)."""
     if sys.platform != "win32":
-        raise OSError("Bitte im Terminal ausführen: sudo victus-fan update")
+        raise OSError(NOT_WINDOWS)
     import ctypes
 
     rc = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
@@ -202,24 +204,23 @@ def update_summary(status: dict, installed: dict | None = None) -> tuple[str, st
 
 def restart_service() -> None:
     """Startet den Hintergrunddienst neu (fragt nach Administratorrechten)."""
-    if sys.platform == "win32":
-        import ctypes
+    if sys.platform != "win32":
+        raise OSError(NOT_WINDOWS)
+    import ctypes
 
-        script = (
-            f"Stop-ScheduledTask -TaskName {TASK_NAME} -ErrorAction SilentlyContinue; "
-            "Get-CimInstance Win32_Process -Filter \"Name = 'pythonw.exe'\" | "
-            "Where-Object { $_.CommandLine -like '*victus_fan run*' } | "
-            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
-            f"Start-ScheduledTask -TaskName {TASK_NAME}"
-        )
-        encoded = base64.b64encode(script.encode("utf-16-le")).decode()
-        rc = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
-            None, "runas", "powershell.exe",
-            f"-NoProfile -WindowStyle Hidden -EncodedCommand {encoded}", None, 0)
-        if rc <= 32:
-            raise OSError("Neustart abgebrochen oder fehlgeschlagen")
-    else:
-        subprocess.Popen(["pkexec", "systemctl", "restart", "victus-fan.service"])
+    script = (
+        f"Stop-ScheduledTask -TaskName {TASK_NAME} -ErrorAction SilentlyContinue; "
+        "Get-CimInstance Win32_Process -Filter \"Name = 'pythonw.exe' OR Name = 'python.exe'\" | "
+        "Where-Object { $_.CommandLine -like '*victus_fan run*' } | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
+        f"Start-ScheduledTask -TaskName {TASK_NAME}"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    rc = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
+        None, "runas", "powershell.exe",
+        f"-NoProfile -WindowStyle Hidden -EncodedCommand {encoded}", None, 0)
+    if rc <= 32:
+        raise OSError("Neustart abgebrochen oder fehlgeschlagen")
 
 
 class SingleInstance:
@@ -524,18 +525,24 @@ class App:
         self._write(power_mode=power)
 
     def edit_config(self) -> None:
-        open_file(self.config_path)
+        self._open(self.config_path)
 
     def open_log(self) -> None:
-        if paths.LOG_FILE and paths.LOG_FILE.exists():
-            open_file(paths.LOG_FILE)
+        if paths.LOG_FILE.exists():
+            self._open(paths.LOG_FILE)
         else:
             messagebox.showinfo("Victus Lüftersteuerung", "Noch keine Logdatei vorhanden.")
+
+    def _open(self, path: Path) -> None:
+        try:
+            open_file(path)
+        except OSError as exc:
+            messagebox.showwarning("Victus Lüftersteuerung", str(exc))
 
     def selftest(self) -> None:
         if not messagebox.askokcancel(
                 "Hardware-Test",
-                "Der Test prüft etwa 2 Minuten lang, welche Lüfterbefehle dein Notebook wirklich "
+                "Der Test prüft etwa 1,5 Minuten lang, welche Lüfterbefehle dein Notebook wirklich "
                 "umsetzt. Die Lüfter werden dabei hörbar schneller und langsamer.\n\n"
                 "Das Ergebnis wird automatisch in die Konfiguration übernommen.\n"
                 "Bitte die Administrator-Abfrage bestätigen."):

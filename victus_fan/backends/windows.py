@@ -104,7 +104,7 @@ class WindowsBackend(FanBackend):
     def __init__(self, settings: dict):
         self.bios = HpBios()
         self._max_active: bool | None = None
-        self._probed: bool | None = None
+        self._bios_temp_ok: bool | None = None   # wird beim ersten Lesen geprüft
         self._fan_mode: str = ""
         self._cpu_sensor_id = "auto"
         self._cpu_sensor = None
@@ -141,39 +141,31 @@ class WindowsBackend(FanBackend):
             elif self._fan_mode:
                 self.set_fan_mode("default")
             self._fan_mode = fan_mode
-        mode = settings.get("mode", "auto")
-        if mode == "level":
-            self.supports_level = True
-        elif mode == "toggle":
-            self.supports_level = False
-        else:
-            if self._probed is None:
-                self._probed = self._probe_level()
-            self.supports_level = self._probed
+        # "level" = stufenlos, "toggle" = nur Max an/aus (Sicherheitsnetz für BIOS
+        # ohne Drehzahlvorgabe; der Hardware-Test stellt das bei Bedarf ein).
+        self.supports_level = settings.get("mode", "level") != "toggle"
         log.info("Windows-Backend: %s, max. Stufen CPU %d / GPU %d",
                  "stufenlos" if self.supports_level else "Max an/aus", self.max_cpu, self.max_gpu)
-
-    def _probe_level(self) -> bool:
-        try:
-            current = self.bios.call(GET_FAN_LEVEL)[:2]
-            self.bios.call(SET_FAN_LEVEL, current, out_size=0)
-            log.info("Stufenlose Lüftersteuerung verfügbar")
-            return True
-        except Exception as exc:  # noqa: BLE001 - WMI wirft COM-Fehler
-            log.info("Stufenlose Steuerung nicht verfügbar (%s) - nutze Max an/aus", exc)
-            return False
 
     def read_cpu_temp(self) -> float | None:
         if self._cpu_sensor is not None:
             value = self._cpu_sensor.read()
             if value is not None:
                 return value
-        try:
-            t = self.bios.call(GET_TEMP, [0x01])[0]
+        # Automatik: HP-BIOS-Sensor, sonst die wärmste ACPI-Thermalzone. Liefert
+        # das BIOS beim ersten Versuch nichts (wie beim Victus BV8D4EA), wird es
+        # danach nicht mehr gefragt.
+        if self._bios_temp_ok is not False:
+            try:
+                t = self.bios.call(GET_TEMP, [0x01])[0]
+            except Exception:  # noqa: BLE001
+                t = 0
             if 0 < t < 120:
+                self._bios_temp_ok = True
                 return float(t)
-        except Exception as exc:  # noqa: BLE001
-            log.debug("BIOS-Temperatur nicht lesbar: %s", exc)
+            if self._bios_temp_ok is None:
+                log.info("HP-BIOS liefert keine Temperatur - nutze ACPI-Thermalzone")
+                self._bios_temp_ok = False
         return self._acpi_temp()
 
     def _acpi_temp(self) -> float | None:

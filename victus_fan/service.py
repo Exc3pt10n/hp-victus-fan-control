@@ -41,7 +41,6 @@ class FanService:
         self.stop_event = threading.Event()
         self._last_sent: tuple | None = None
         self._last_sent_at = 0.0
-        self._platform_profile: str | None = None
         self._errors = 0
         self._paused = False
         # Zuletzt an das Backend gegebener BIOS-Leistungsmodus
@@ -130,10 +129,6 @@ class FanService:
         name, reason = self.active_profile_name(on_battery, override)
         profile = self.config.profile(name)
 
-        if (self.config.general.get("switch_platform_profile") and profile.platform_profile
-                and profile.platform_profile != self._platform_profile and not self.dry_run):
-            b.set_platform_profile(profile.platform_profile)
-            self._platform_profile = profile.platform_profile
 
         # Der Regler läuft immer mit, damit die Glättung beim Fortsetzen stimmt.
         decision = self.controller.update(reading, profile, now)

@@ -1,4 +1,4 @@
-"""Standardpfade für Konfiguration, Status und Log."""
+"""Standardpfade für Konfiguration, Status, Logs und Installation (Windows)."""
 
 from __future__ import annotations
 
@@ -8,22 +8,22 @@ from pathlib import Path
 
 if sys.platform == "win32":
     DATA_DIR = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "VictusFan"
-else:
-    DATA_DIR = Path("/etc/victus-fan")
+    INSTALL_DIR = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "VictusFan"
+else:  # nur für Entwicklung/Tests (z. B. --backend simulate)
+    DATA_DIR = Path.home() / ".victus-fan"
+    INSTALL_DIR = DATA_DIR / "install"
 
 CONFIG_FILE = DATA_DIR / "config.toml"
-# Vom Dienst geschrieben: aktueller Zustand für "victus-fan status".
-STATUS_FILE = (DATA_DIR if sys.platform == "win32" else Path("/run/victus-fan")) / "status.json"
-# Vom Benutzer geschrieben: Profil-Override für "victus-fan profile <name>".
-OVERRIDE_FILE = (DATA_DIR if sys.platform == "win32" else Path("/run/victus-fan")) / "override.json"
-LOG_FILE = DATA_DIR / "victus-fan.log" if sys.platform == "win32" else None
+# Vom Dienst geschrieben: aktueller Zustand für Oberfläche und "victus-fan status".
+STATUS_FILE = DATA_DIR / "status.json"
+# Von Oberfläche/CLI geschrieben: Profil, Modus und Leistungsmodus.
+OVERRIDE_FILE = DATA_DIR / "override.json"
+LOG_FILE = DATA_DIR / "victus-fan.log"
 
-# Installation und Auto-Update (Windows)
-INSTALL_DIR = Path(os.environ.get("PROGRAMFILES", r"C:\Program Files")) / "VictusFan"
-# Vom Installer geschrieben: installierter Stand (Commit) - auch die Oberfläche
-# erkennt darüber, dass ein Update installiert wurde.
+# Vom Installer geschrieben: installierter Stand (Commit). Die Oberfläche
+# erkennt daran auch, dass ein Update installiert wurde.
 INSTALL_INFO = INSTALL_DIR / "installed.json"
-# Vom Updater geschrieben: Ergebnis der letzten Prüfung
+# Vom Updater geschrieben
 UPDATE_STATUS = DATA_DIR / "update_status.json"
 UPDATE_LOG = DATA_DIR / "update.log"
 UPDATE_INSTALL_LOG = DATA_DIR / "update-install.log"
