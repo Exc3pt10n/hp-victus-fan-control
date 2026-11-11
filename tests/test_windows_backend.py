@@ -57,6 +57,19 @@ class WindowsBackendTest(unittest.TestCase):
         temp_calls = [c for c in b.bios.calls if c[0] == windows.GET_TEMP]
         self.assertEqual(len(temp_calls), 1)
 
+    def test_mode_is_refreshed_with_levels(self):
+        clock = [1000.0]
+        with mock.patch.object(windows.time, "monotonic", lambda: clock[0]):
+            b = make()                                   # setzt "default" beim Start
+            b.set_levels([20, 20])
+            modes = lambda: [c for c in b.bios.calls if c[0] == windows.SET_FAN_MODE]
+            self.assertEqual(len(modes()), 1)            # noch frisch
+            clock[0] += 60
+            b.set_levels([20, 20])
+            self.assertEqual(len(modes()), 2)            # nach 50 s erneut gesetzt
+            self.assertEqual(modes()[-1], (windows.SET_FAN_MODE, [0xFF, 0x30]))
+            self.assertEqual(b.bios.calls[-1][0], windows.SET_FAN_LEVEL)
+
 
 if __name__ == "__main__":
     unittest.main()

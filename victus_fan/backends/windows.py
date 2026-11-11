@@ -13,7 +13,10 @@ Command    0x20008 (Standard), Signatur "SECU"
 =========  ====================================================
 
 Wichtig: Das BIOS übernimmt nach etwa 120 s ohne neuen Befehl wieder die
-Automatik. Der Dienst sendet die Werte deshalb regelmäßig erneut.
+Automatik. Beim Victus BV8D4EA setzt es feste Drehzahlen außerdem nur um,
+solange ein kürzlich gesetzter Leistungsmodus sie "freigibt" - nach einer
+Weile fällt es in seine eigene Automatik zurück. Der Dienst sendet deshalb
+Drehzahl und Leistungsmodus regelmäßig erneut.
 
 Benötigt Administratorrechte (der Installer richtet den Dienst als SYSTEM ein).
 """
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import time
 
 from .base import BackendError, FanBackend
 
@@ -106,6 +110,7 @@ class WindowsBackend(FanBackend):
         self._max_active: bool | None = None
         self._bios_temp_ok: bool | None = None   # wird beim ersten Lesen geprüft
         self._fan_mode: str = ""
+        self._mode_set_at: float | None = None
         self._cpu_sensor_id = "auto"
         self._cpu_sensor = None
         self._sensors: dict | None = None
@@ -117,6 +122,8 @@ class WindowsBackend(FanBackend):
         self.max_gpu = int(settings["max_level_gpu"])
         self.min_level = int(settings.get("min_level", 0))
         self.keepalive = float(settings["keepalive"])
+        # Leistungsmodus spätestens nach dieser Zeit erneut setzen (Freigabe auffrischen).
+        self.mode_keepalive = float(settings.get("mode_keepalive", 50.0))
         sensor_id = settings.get("cpu_sensor", "auto") or "auto"
         if sensor_id != self._cpu_sensor_id:
             self._cpu_sensor_id = sensor_id
@@ -207,7 +214,22 @@ class WindowsBackend(FanBackend):
         """Lüfterstufen direkt setzen (auch für den Hardware-Test)."""
         if self._max_active:
             self.set_max(False)
+        if self._fan_mode and self.seconds_since_mode() >= self.mode_keepalive:
+            self.rearm(quiet=True)
         self.bios.call(SET_FAN_LEVEL, levels, out_size=0)
+
+    def seconds_since_mode(self) -> float:
+        """Sekunden seit dem letzten Setzen des Leistungsmodus (inf = nie)."""
+        return float("inf") if self._mode_set_at is None else time.monotonic() - self._mode_set_at
+
+    def rearm(self, quiet: bool = False) -> None:
+        """Aktuellen Leistungsmodus erneut setzen - gibt die Drehzahlvorgabe wieder frei."""
+        if not self._fan_mode:
+            return
+        try:
+            self.set_fan_mode(self._fan_mode, quiet=quiet)
+        except Exception as exc:  # noqa: BLE001
+            log.error("Leistungsmodus '%s' konnte nicht erneut gesetzt werden: %s", self._fan_mode, exc)
 
     def set_percent(self, percent: float) -> None:
         if not self.supports_level:
@@ -218,7 +240,7 @@ class WindowsBackend(FanBackend):
         self.bios.call(SET_MAX_FAN, [1 if enabled else 0], out_size=0)
         self._max_active = enabled
 
-    def set_fan_mode(self, name: str) -> None:
+    def set_fan_mode(self, name: str, quiet: bool = False) -> None:
         """BIOS-Leistungsmodus setzen; probiert neue und Legacy-Codes."""
         if name not in FAN_MODES:
             raise BackendError(f"Unbekannter Leistungsmodus '{name}'")
@@ -226,7 +248,8 @@ class WindowsBackend(FanBackend):
         for code in FAN_MODES[name]:
             try:
                 self.bios.call(SET_FAN_MODE, [0xFF, code], out_size=0)
-                log.info("Leistungsmodus -> %s (0x%02X)", name, code)
+                self._mode_set_at = time.monotonic()
+                (log.debug if quiet else log.info)("Leistungsmodus -> %s (0x%02X)", name, code)
                 return
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"0x{code:02X}: {exc}")

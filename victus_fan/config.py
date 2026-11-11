@@ -77,6 +77,9 @@ DEFAULTS: dict = {
         # Das BIOS fällt nach ca. 120 s ohne Befehl in seine Automatik zurück -
         # deshalb regelmäßig erneut senden.
         "keepalive": 60.0,
+        # Leistungsmodus so oft neu setzen: Das BIOS des Victus BV8D4EA setzt
+        # feste Drehzahlen nur um, solange ein Modus kürzlich gesetzt wurde.
+        "mode_keepalive": 50.0,
     },
     "update": {
         # Automatisch nach Updates suchen und sie installieren.
@@ -213,3 +216,23 @@ def update_config_values(path: str | Path, section: str, values: dict, note: str
     tomllib.loads(text)  # nur gültiges TOML schreiben
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def reset_auto_chosen_fan_mode(path: str | Path) -> bool:
+    """Einmalige Korrektur (Version 2.0.1): Frühere Versionen wechselten den
+    BIOS-Leistungsmodus selbst (default -> cool -> performance), wenn die Lüfter
+    nicht folgten, und trugen ihn mit dem Vermerk "automatisch gewählt" ein.
+    Die Ursache war aber eine ablaufende Freigabe, kein falscher Modus - solche
+    Einträge werden auf "default" zurückgesetzt. Vom Benutzer gesetzte Werte
+    bleiben unverändert."""
+    import re
+
+    path = Path(path)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    if not re.search(r'^fan_mode\s*=\s*"(cool|performance)"\s*#\s*automatisch gewählt', text, re.M):
+        return False
+    update_config_values(path, "windows", {"fan_mode": "default"}, note="zurückgesetzt (Version 2.0.1)")
+    return True

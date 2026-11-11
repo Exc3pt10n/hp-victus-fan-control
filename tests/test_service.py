@@ -151,26 +151,54 @@ class ConfigUpdateTest(unittest.TestCase):
             self.assertIn("[neu]", p.read_text(encoding="utf-8"))
 
 
-class EscalationTest(unittest.TestCase):
-    def test_tries_next_fan_mode_and_saves_it(self):
+class RearmTest(unittest.TestCase):
+    """Fallen die Lüfter in die BIOS-Automatik zurück, wird derselbe
+    Leistungsmodus erneut gesetzt - kein Wechsel zu einem anderen Modus."""
+
+    def make(self, follows_after_rearm: bool):
+        b = FakeBackend(level=True)
+        b.temp = 65.0
+        b.rearms = 0
+        b.following = False
+
+        def rearm():
+            b.rearms += 1
+            b.following = follows_after_rearm
+
+        b.rearm = rearm
+        b.expected_rpm = lambda p: [int(54 * p), int(52 * p)]
+        b.read_fan_rpm = lambda: b.expected_rpm(b.calls[-1][1]) if b.following and b.calls else [2700, 0]
+        return b, FanService(Config(), b)
+
+    def run_for(self, s, seconds):
+        status = None
+        with mock.patch("victus_fan.service.time.monotonic", side_effect=list(range(0, seconds, 2))):
+            for _ in range(0, seconds, 2):
+                status = s.step()
+        return status
+
+    def test_rearm_fixes_it(self):
+        b, s = self.make(follows_after_rearm=True)
+        status = self.run_for(s, 200)
+        self.assertEqual(b.rearms, 1)
+        self.assertIsNone(status["warning"])
+
+    def test_warning_after_limit(self):
+        b, s = self.make(follows_after_rearm=False)
+        status = self.run_for(s, 400)
+        self.assertEqual(b.rearms, 3)
+        self.assertIsNotNone(status["warning"])
+
+    def test_auto_chosen_mode_is_reset_once(self):
+        from victus_fan.config import reset_auto_chosen_fan_mode
         with tempfile.TemporaryDirectory() as d:
-            cfg_path = Path(d) / "config.toml"
-            cfg_path.write_text("[windows]\nmode = \"level\"\n", encoding="utf-8")
-            b = FakeBackend(level=True)
-            b.temp = 65.0
-            b.read_fan_rpm = lambda: [2700, 0]           # Lüfter ignorieren die Vorgabe
-            b.expected_rpm = lambda p: [int(55 * p), int(57 * p)]
-            b.modes = []
-            b.set_fan_mode = lambda name: b.modes.append(name)
-            b.reconfigure = lambda settings: b.set_fan_mode(settings["fan_mode"])
-            s = FanService(load_config(cfg_path), b)
-            with mock.patch("victus_fan.service.time.monotonic", side_effect=list(range(0, 400, 2))):
-                for _ in range(0, 400, 2):
-                    status = s.step()
-            # "default" ist Standard und schon gesetzt -> danach cool, performance
-            self.assertEqual(b.modes, ["cool", "performance"])
-            self.assertIsNotNone(status["warning"])        # alle probiert -> Warnung
-            self.assertEqual(load_config(cfg_path).windows["fan_mode"], "performance")
+            p = Path(d) / "config.toml"
+            p.write_text('[windows]\nfan_mode = "performance"  # automatisch gewählt\n', encoding="utf-8")
+            self.assertTrue(reset_auto_chosen_fan_mode(p))
+            self.assertEqual(load_config(p).windows["fan_mode"], "default")
+            self.assertFalse(reset_auto_chosen_fan_mode(p))      # nur einmal
+            p.write_text('[windows]\nfan_mode = "performance"\n', encoding="utf-8")
+            self.assertFalse(reset_auto_chosen_fan_mode(p))      # eigene Wahl bleibt
 
 
 class PowerModeTest(unittest.TestCase):
@@ -205,11 +233,6 @@ class PowerModeTest(unittest.TestCase):
         self.set(power_mode="cool", mode="normal")
         self.s.step()
         self.assertEqual(self.b.applied[-1], "cool")
-
-    def test_no_escalation_against_user_choice(self):
-        self.set(power_mode="cool")
-        self.s.step()
-        self.assertFalse(self.s._escalate_fan_mode())
 
 
 if __name__ == "__main__":

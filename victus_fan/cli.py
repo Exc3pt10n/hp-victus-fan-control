@@ -34,12 +34,16 @@ def _r(value):
 
 
 def cmd_run(args) -> int:
+    from .config import reset_auto_chosen_fan_mode
     from .service import FanService
 
+    migrated = reset_auto_chosen_fan_mode(args.config)
     cfg = load_config(args.config)
     log_file = Path(args.log_file) if args.log_file else paths.LOG_FILE
     _setup_logging("DEBUG" if args.verbose else cfg.general["log_level"], log_file)
     backend = create_backend(args.backend or cfg.general["backend"], cfg)
+    if migrated:
+        logging.getLogger(__name__).info("Automatisch gewählten BIOS-Leistungsmodus auf 'default' zurückgesetzt")
     service = FanService(cfg, backend, status_file=paths.STATUS_FILE,
                          override_file=paths.OVERRIDE_FILE, dry_run=args.dry_run)
     service.install_signal_handlers()

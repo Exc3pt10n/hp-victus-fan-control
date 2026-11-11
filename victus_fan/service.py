@@ -10,16 +10,16 @@ import time
 from pathlib import Path
 
 from .backends import BackendError, FanBackend
-from .config import Config, load_config, update_config_values
+from .config import Config, load_config
 from .controller import FanController, Reading, ToggleAdapter
 from .state import DEFAULT_OVERRIDE, read_override
 
 log = logging.getLogger(__name__)
 
-# Manche HP-BIOS setzen feste Drehzahlen erst um, nachdem ein Leistungsmodus
-# gesetzt wurde. Folgen die Lüfter nicht, wird der nächste Modus probiert -
-# "default" zuerst, weil er die Leistungsaufnahme nicht verändert.
-FAN_MODE_CHAIN = ("default", "cool", "performance")
+# Fallen die Lüfter in die BIOS-Automatik zurück (Freigabe durch den
+# Leistungsmodus abgelaufen), wird derselbe Modus erneut gesetzt - höchstens so
+# oft hintereinander, danach erscheint eine Warnung.
+REARM_LIMIT = 3
 
 
 def _round(value: float | None) -> float | None:
@@ -48,6 +48,7 @@ class FanService:
         self._config_mtime = self._mtime()
         self._last_change_at = 0.0
         self._mismatch_since: float | None = None
+        self._rearm_count = 0
 
     # ------------------------------------------------------------------
     def _mtime(self) -> float | None:
@@ -192,13 +193,27 @@ class FanService:
             if self._mismatch_since is not None:
                 log.info("Lüfter folgen der Vorgabe wieder")
             self._mismatch_since = None
-        elif self._mismatch_since is None:
-            self._mismatch_since = now
-            log.warning("Drehzahl %s U/min weicht von der Vorgabe %s U/min ab", rpm, expected)
-        warning = self._mismatch_warning(now)
-        if warning and self._escalate_fan_mode():
+            self._rearm_count = 0
             return None
-        return warning
+        if self._mismatch_since is None:
+            self._mismatch_since = now
+            since = getattr(self.backend, "seconds_since_mode", lambda: float("nan"))()
+            log.warning("Drehzahl %s U/min weicht von der Vorgabe %s U/min ab "
+                        "(%.0f s nach dem letzten Setzen des Leistungsmodus)", rpm, expected, since)
+            if self._rearm():
+                return None
+        return self._mismatch_warning(now)
+
+    def _rearm(self) -> bool:
+        """Leistungsmodus erneut setzen, damit das BIOS die Vorgabe wieder umsetzt."""
+        if not hasattr(self.backend, "rearm") or self._rearm_count >= REARM_LIMIT:
+            return False
+        self._rearm_count += 1
+        log.info("Setze den Leistungsmodus erneut (Versuch %d von %d)", self._rearm_count, REARM_LIMIT)
+        self.backend.rearm()
+        self._mismatch_since = None
+        self._last_sent = None       # Drehzahl sofort neu senden
+        return True
 
     def effective_windows(self, override: dict) -> dict:
         """Windows-Einstellungen mit dem vom Benutzer gewählten Leistungsmodus."""
@@ -219,40 +234,11 @@ class FanService:
         self._last_sent = None      # Drehzahl im neuen Modus neu senden
         self._mismatch_since = None
 
-    def _escalate_fan_mode(self) -> bool:
-        """Nächsten BIOS-Leistungsmodus probieren und merken. False = keiner mehr übrig."""
-        b = self.backend
-        if not hasattr(b, "set_fan_mode") or self.dry_run:
-            return False
-        if self._override()["power_mode"] != "auto":
-            return False  # vom Benutzer gewählt - nicht eigenmächtig ändern
-        current = self.config.windows.get("fan_mode") or ""
-        index = FAN_MODE_CHAIN.index(current) + 1 if current in FAN_MODE_CHAIN else 0
-        if index >= len(FAN_MODE_CHAIN):
-            return False
-        new_mode = FAN_MODE_CHAIN[index]
-        log.warning("Lüfter folgen nicht - versuche BIOS-Leistungsmodus '%s'", new_mode)
-        self.config.raw["windows"]["fan_mode"] = new_mode
-        try:
-            b.reconfigure(self.config.windows)
-            self._applied_fan_mode = new_mode
-        except Exception as exc:  # noqa: BLE001
-            log.error("Leistungsmodus '%s' fehlgeschlagen: %s", new_mode, exc)
-        if self.config.path is not None:
-            try:
-                update_config_values(self.config.path, "windows", {"fan_mode": new_mode},
-                                     note="automatisch gewählt")
-                self._config_mtime = self._mtime()
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Konnte Leistungsmodus nicht in der Konfiguration speichern: %s", exc)
-        self._mismatch_since = None
-        self._last_sent = None  # Drehzahl neu senden
-        return True
-
     def _mismatch_warning(self, now: float) -> str | None:
         if self._mismatch_since is None or now - self._mismatch_since < 30:
             return None
-        return "Die Lüfter folgen der Drehzahlvorgabe nicht. Bitte den Hardware-Test ausführen."
+        return ("Die Lüfter folgen der Drehzahlvorgabe nicht, auch nicht nach erneutem Setzen "
+                "des Leistungsmodus. Bitte den Hardware-Test ausführen.")
 
     def _write_status(self, status: dict) -> None:
         if not self.status_file:

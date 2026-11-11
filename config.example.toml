@@ -28,7 +28,8 @@ cpu_sensor = "auto"           # auto oder eine id aus "victus-fan sensors"
 min_level = 0                 # kleinste wirksame Stufe > 0
 max_level_cpu = 54            # 54 = 5400 U/min
 max_level_gpu = 52
-keepalive = 60.0              # das BIOS übernimmt nach ~120 s ohne Befehl wieder
+keepalive = 60.0              # Drehzahl erneut senden (das BIOS übernimmt nach ~120 s ohne Befehl)
+mode_keepalive = 50.0         # Leistungsmodus erneut setzen (sonst ignoriert das BIOS die Drehzahl)
 
 [update]
 enabled = true                # beim Start und alle 6 Stunden nach Updates suchen

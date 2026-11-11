@@ -74,16 +74,16 @@ der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
   dann sanft mit 3 %/s.
 - **Sicherheit:** Ab 92 °C oder ohne Sensordaten sofort volle Drehzahl. Nach wiederholten
   Fehlern übernimmt wieder das BIOS; dessen Überhitzungsschutz bleibt immer aktiv.
-- **Selbstkontrolle:** Die gemessene Drehzahl wird laufend mit der Vorgabe verglichen. Folgen
-  die Lüfter nicht, probiert die Steuerung den nächsten BIOS-Leistungsmodus und zeigt
-  andernfalls eine Warnung im Fenster.
+- **Selbstkontrolle:** Die gemessene Drehzahl wird laufend mit der Vorgabe verglichen. Fallen
+  die Lüfter in die BIOS-Automatik zurück, setzt die Steuerung den Leistungsmodus sofort neu;
+  hilft das dreimal nicht, erscheint eine Warnung im Fenster.
 
 Gemessene Eigenschaften des Victus BV8D4EA (Ryzen 5 240, RTX 5050):
 
 | | |
 |---|---|
 | Lüfter | 1100 bis 5400 / 5200 U/min stufenlos, Stufe 0 = Stillstand |
-| Drehzahlvorgabe | wirkt erst, nachdem ein BIOS-Leistungsmodus gesetzt wurde – die Steuerung setzt beim Start „Standard“ |
+| Drehzahlvorgabe | wirkt nur, solange ein BIOS-Leistungsmodus kürzlich gesetzt wurde – die Steuerung setzt ihn deshalb etwa alle 50 s neu (welcher Modus, ist egal) |
 | CPU-Temperatur | der HP-BIOS-Sensor liefert nichts; die ACPI-Zone `THRM` folgt der CPU (Tctl) mit etwa 3 °C Abstand |
 | GPU-Temperatur | über `nvidia-smi` |
 
