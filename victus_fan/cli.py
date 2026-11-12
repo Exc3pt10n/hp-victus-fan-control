@@ -110,9 +110,9 @@ def cmd_power(args) -> int:
         print(f"Konfiguration nicht schreibbar: {exc}")
         return 1
     print({"auto": "BIOS-Leistungsmodus aus der Konfiguration ([windows] fan_mode).",
-           "default": "BIOS-Leistungsmodus: Standard (Grafikkarte bis ≈ 70 W).",
-           "cool": "BIOS-Leistungsmodus: Kühl (laut HP weniger Leistung, kühleres Gehäuse).",
-           "performance": "BIOS-Leistungsmodus: Performance (Grafikkarte bis 80 W)."}[args.name])
+           "default": "BIOS-Leistungsmodus: Standard.",
+           "cool": "BIOS-Leistungsmodus: Kühl.",
+           "performance": "BIOS-Leistungsmodus: Performance."}[args.name])
     return 0
 
 

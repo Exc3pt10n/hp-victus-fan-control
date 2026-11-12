@@ -59,18 +59,13 @@ Drei Einstellungen lassen sich unabhängig voneinander wählen:
 | **Volle Drehzahl** | Dauerhaft Maximum (≈ 5400 U/min), z. B. beim Rendern |
 | **BIOS** | Steuerung pausiert, das BIOS regelt wie ab Werk |
 
-**Leistung (BIOS)** – derselbe Modus wie im OMEN Gaming Hub. Gemessen (3DMark Speed Way) wirkt er
-nur auf die Grafikkarte:
+**Leistung (BIOS)** – derselbe Modus wie im OMEN Gaming Hub (Automatisch, Standard, Kühl,
+Performance). Gemessen mit 3DMark Speed Way und HWiNFO hat er auf dem Victus BV8D4EA **keinen
+messbaren Einfluss**: In allen drei Modi erreichen die RTX 5050 (≈ 80 W) und die CPU dieselbe
+Leistung. Die Steuerung setzt ihn trotzdem, weil das BIOS die Drehzahlvorgabe erst danach umsetzt.
 
-| Leistung | Bedeutung |
-|---|---|
-| **Automatisch** | Wert aus der Konfiguration (Standard) |
-| **Standard** | RTX 5050 bis ≈ 70 W |
-| **Kühl** | Laut HP weniger Leistung und kühleres Gehäuse (nicht gemessen) |
-| **Performance** | RTX 5050 bis 80 W (Dynamic Boost) – mehr FPS, mehr Wärme |
-
-Die **CPU-Grenze** hängt dagegen nur an der Stromversorgung: am HP-Netzteil 54 W dauerhaft
-(65 W im Boost), an einer USB-C-Dockingstation nur 35 W – in jedem Leistungsmodus.
+Die **CPU-Grenze** hängt nur an der Stromversorgung: am HP-Netzteil 54 W dauerhaft (65 W im
+Boost), an einer USB-C-Dockingstation nur 35 W.
 
 Die Oberfläche läuft mit normalen Benutzerrechten; nur der Hintergrunddienst spricht mit
 der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
