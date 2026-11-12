@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "victus-fan"
-version = "2.4.0"
+version = "2.5.0"
 description = "Intelligente Lüftersteuerung für HP-Victus-Notebooks (Windows 11)"
 readme = "README.md"
 requires-python = ">=3.11"
