@@ -12,6 +12,7 @@ from pathlib import Path
 from .backends import BackendError, FanBackend
 from .config import Config, load_config
 from .controller import FanController, Reading, ToggleAdapter
+from .power_events import DISPLAY_OFF, DISPLAY_ON, RESUME, SUSPEND, PowerEvents
 from .state import DEFAULT_OVERRIDE, read_override
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,9 @@ REARM_WARN = 3
 # die Lüfter SETTLE_TIME Sekunden Zeit, bevor verglichen wird.
 SIGNIFICANT_CHANGE = 5
 SETTLE_TIME = 20.0
+# Liegen zwischen zwei Messungen mehr als so viele Sekunden, war das System
+# im Standby/Ruhezustand (Ersatz, falls die Windows-Benachrichtigung fehlt).
+RESUME_GAP = 30.0
 
 
 def _round(value: float | None) -> float | None:
@@ -34,9 +38,13 @@ def _round(value: float | None) -> float | None:
 
 class FanService:
     def __init__(self, config: Config, backend: FanBackend, status_file: Path | None = None,
-                 override_file: Path | None = None, dry_run: bool = False):
+                 override_file: Path | None = None, dry_run: bool = False, power_events=None):
         self.config = config
         self.backend = backend
+        # Standby/Bildschirm aus: die Firmware regelt, Abweichungen sind dann normal.
+        self.power_events = power_events
+        self._low_power = False
+        self._last_wall: float | None = None
         self.status_file = status_file
         self.override_file = override_file
         self.dry_run = dry_run
@@ -123,9 +131,40 @@ class FanService:
             self._last_sent_at = now
         return f"{command[1]} %" if command[0] == "level" else ("MAX" if command[1] else "Auto")
 
+    def _handle_power_events(self, now: float) -> None:
+        events = self.power_events.pop() if self.power_events else []
+        wall = time.time()
+        gap = RESUME_GAP if self._last_wall is None else wall - self._last_wall
+        if self._last_wall is not None and gap > max(RESUME_GAP, 5 * float(self.config.general["interval"])):
+            log.info("%.0f s ohne Messung - Rückkehr aus Standby/Ruhezustand angenommen", gap)
+            events.append(RESUME)
+        self._last_wall = wall
+        for event in events:
+            if event in (SUSPEND, DISPLAY_OFF):
+                if not self._low_power:
+                    log.info("%s - die Firmware regelt, Abweichungen werden ignoriert",
+                             "Standby" if event == SUSPEND else "Bildschirm aus")
+                self._low_power = True
+            elif event in (RESUME, DISPLAY_ON):
+                if self._low_power or event == RESUME:
+                    log.info("%s - setze Leistungsmodus und Drehzahl neu",
+                             "Aus dem Standby zurück" if event == RESUME else "Bildschirm an")
+                    self._take_back_control(now)
+                self._low_power = False
+
+    def _take_back_control(self, now: float) -> None:
+        """Nach dem Aufwachen sofort neu setzen, statt auf die Abweichung zu warten."""
+        if not self.dry_run and hasattr(self.backend, "rearm"):
+            self.backend.rearm()
+        self._last_sent = None          # Drehzahl sofort neu senden
+        self._mismatch_since = None
+        self._rearm_count = 0
+        self._last_rearm_at = now
+
     def step(self) -> dict:
         self.reload_config_if_changed()
         now = time.monotonic()
+        self._handle_power_events(now)
         b = self.backend
         on_battery = b.on_battery()
         reading = Reading(_round(b.read_cpu_temp()), _round(b.read_gpu_temp()), on_battery)
@@ -182,6 +221,7 @@ class FanService:
             "fan_target_rpm": (b.expected_rpm(self._last_sent[1])
                                if self._last_sent and self._last_sent[0] == "level" else None),
             "dry_run": self.dry_run,
+            "low_power": self._low_power,
         }
         self._write_status(status)
         return status
@@ -189,7 +229,7 @@ class FanService:
     def _check_effect(self, rpm: list[int], now: float, mode: str) -> str | None:
         """Erkennt, ob die Lüfter der Drehzahlvorgabe tatsächlich folgen."""
         sent = self._last_sent
-        if mode != "normal" or self.dry_run or not sent or sent[0] != "level":
+        if mode != "normal" or self.dry_run or not sent or sent[0] != "level" or self._low_power:
             self._mismatch_since = None
             return None
         expected = self.backend.expected_rpm(sent[1])
@@ -273,6 +313,10 @@ class FanService:
     def run(self, verbose: bool = False) -> None:
         interval = float(self.config.general["interval"])
         log.info("Lüftersteuerung gestartet: %s", self.backend.describe())
+        if self.power_events is None and not self.dry_run:
+            events = PowerEvents()
+            if events.start():
+                self.power_events = events
         try:
             while not self.stop_event.is_set():
                 try:
