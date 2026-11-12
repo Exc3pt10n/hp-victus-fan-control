@@ -85,8 +85,9 @@ der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
 - **Sicherheit:** Ab 92 °C oder ohne Sensordaten sofort volle Drehzahl. Nach wiederholten
   Fehlern übernimmt wieder das BIOS; dessen Überhitzungsschutz bleibt immer aktiv.
 - **Standby:** Im Standby und bei ausgeschaltetem Bildschirm regelt die Firmware die Lüfter
-  selbst (sie ignoriert dann Drehzahlbefehle). Beim Aufwachen setzt die Steuerung Leistungsmodus
-  und Drehzahl sofort neu.
+  selbst (sie ignoriert dann Drehzahlbefehle); Warnungen und Anlaufhilfe ruhen so lange. Erst wenn
+  der Bildschirm wieder angeht, setzt die Steuerung Leistungsmodus und Drehzahl sofort neu – die
+  kurzen Wartungs-Aufwachphasen des modernen Standbys zählen nicht als Rückkehr.
 - **Anlaufhilfe:** Ein stehender Lüfter läuft bei niedriger Drehzahl nicht von selbst an. Er
   bekommt dann kurz ≈ 3000 U/min, bis er dreht, und läuft danach mit der Zieldrehzahl.
 - **Selbstkontrolle:** Die gemessene Drehzahl wird laufend mit der Vorgabe verglichen. Weicht

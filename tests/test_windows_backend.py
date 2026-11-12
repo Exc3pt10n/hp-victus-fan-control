@@ -125,6 +125,14 @@ class WindowsBackendTest(unittest.TestCase):
         with mock.patch.object(windows.subprocess, "run", side_effect=OSError("kein tasklist")):
             self.assertEqual(windows.hp_processes(), [])
 
+    def test_no_kick_when_disabled(self):
+        b = make()
+        b.bios.rpm_levels = [0, 0]
+        b.kick_enabled = False                            # Standby
+        b.set_levels([12, 11])
+        self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [12, 11]))
+        self.assertFalse(b.kicking)
+
 
 if __name__ == "__main__":
     unittest.main()
