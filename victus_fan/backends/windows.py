@@ -140,6 +140,7 @@ class WindowsBackend(FanBackend):
         self._mode_set_at: float | None = None
         self._levels: list[int] | None = None     # zuletzt vorgegebene Stufen
         self._kicking: set[int] = set()            # Lüfter mit aktiver Anlaufhilfe
+        self.kick_enabled = True                   # vom Dienst im Standby abgeschaltet
         self._kick_started = 0.0
         self._cpu_sensor_id = "auto"
         self._cpu_sensor = None
@@ -249,7 +250,7 @@ class WindowsBackend(FanBackend):
             self.rearm(quiet=True)
         self._levels = list(levels)
         actual = list(levels)
-        if kick:
+        if kick and self.kick_enabled:
             rpm = self.read_fan_rpm()
             stalled = {i for i, lvl in enumerate(levels)
                        if 0 < lvl < KICK_LEVEL and i < len(rpm) and rpm[i] < SPINNING_RPM}
@@ -263,6 +264,8 @@ class WindowsBackend(FanBackend):
                     actual[i] = KICK_LEVEL
             else:
                 self._kicking = set()
+        else:
+            self._kicking = set()
         self.bios.call(SET_FAN_LEVEL, actual, out_size=0)
 
     @property

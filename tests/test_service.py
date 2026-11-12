@@ -281,6 +281,34 @@ class StandbyTest(unittest.TestCase):
         self.assertFalse(status["low_power"])
         self.assertGreater(len(self.b.calls), before)      # Drehzahl sofort neu gesendet
 
+    def test_maintenance_wakeups_in_modern_standby_are_ignored(self):
+        # Log vom 12.11.: Bildschirm aus, danach alle 2-4 min kurz aufgewacht
+        self.b.kick_enabled = True
+        self.events.queue = ["display_on"]          # Startzustand meldet Windows sofort
+        self.run_for(0, 4)
+        self.events.queue = ["display_off"]
+        self.run_for(4, 4)
+        for start in (8, 20, 40):
+            wall = [time.time() + 200 * start]      # lange Pause, Bildschirm weiter aus
+            with mock.patch("victus_fan.service.time.time", lambda: wall[0]):
+                status = self.run_for(start, 6)
+        self.assertEqual(self.b.rearms, 0)
+        self.assertTrue(status["low_power"])
+        self.assertFalse(self.b.kick_enabled)       # keine Anlaufhilfe im Standby
+        self.events.queue = ["display_on"]          # Benutzer ist zurück
+        status = self.run_for(60, 2)
+        self.assertEqual(self.b.rearms, 1)
+        self.assertFalse(status["low_power"])
+        self.assertTrue(self.b.kick_enabled)
+
+    def test_resume_without_display_info_ends_standby(self):
+        self.events.queue = ["suspend"]
+        self.run_for(0, 4)
+        self.events.queue = ["resume"]
+        status = self.run_for(4, 2)
+        self.assertFalse(status["low_power"])
+        self.assertEqual(self.b.rearms, 1)
+
     def test_long_gap_counts_as_resume(self):
         self.run_for(0, 4)
         wall = [time.time() + 600]                         # 10 Minuten keine Messung

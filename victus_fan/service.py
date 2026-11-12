@@ -44,6 +44,7 @@ class FanService:
         # Standby/Bildschirm aus: die Firmware regelt, Abweichungen sind dann normal.
         self.power_events = power_events
         self._low_power = False
+        self._display_known = False      # liefert Windows Bildschirm-Meldungen?
         self._last_wall: float | None = None
         self.status_file = status_file
         self.override_file = override_file
@@ -136,21 +137,32 @@ class FanService:
         wall = time.time()
         gap = RESUME_GAP if self._last_wall is None else wall - self._last_wall
         if self._last_wall is not None and gap > max(RESUME_GAP, 5 * float(self.config.general["interval"])):
-            log.info("%.0f s ohne Messung - Rückkehr aus Standby/Ruhezustand angenommen", gap)
-            events.append(RESUME)
+            if self._low_power:
+                # Moderner Standby: Windows wacht regelmäßig kurz auf (Bildschirm
+                # bleibt aus) - das ist keine Rückkehr des Benutzers.
+                log.debug("%.0f s ohne Messung - kurzes Aufwachen im Standby", gap)
+            else:
+                log.info("%.0f s ohne Messung - Rückkehr aus Standby/Ruhezustand angenommen", gap)
+                events.append(RESUME)
         self._last_wall = wall
         for event in events:
+            if event in (DISPLAY_OFF, DISPLAY_ON):
+                self._display_known = True
             if event in (SUSPEND, DISPLAY_OFF):
                 if not self._low_power:
                     log.info("%s - die Firmware regelt, Abweichungen werden ignoriert",
                              "Standby" if event == SUSPEND else "Bildschirm aus")
                 self._low_power = True
-            elif event in (RESUME, DISPLAY_ON):
+            elif event == DISPLAY_ON or (event == RESUME and not self._display_known):
+                # Mit Bildschirm-Meldungen beendet nur "Bildschirm an" den Standby -
+                # ein Aufwachen bei dunklem Bildschirm ist meist Wartung im Standby.
                 if self._low_power or event == RESUME:
                     log.info("%s - setze Leistungsmodus und Drehzahl neu",
                              "Aus dem Standby zurück" if event == RESUME else "Bildschirm an")
                     self._take_back_control(now)
                 self._low_power = False
+        if hasattr(self.backend, "kick_enabled"):
+            self.backend.kick_enabled = not self._low_power    # keine Anlaufhilfe im Standby
 
     def _take_back_control(self, now: float) -> None:
         """Nach dem Aufwachen sofort neu setzen, statt auf die Abweichung zu warten."""
@@ -191,7 +203,7 @@ class FanService:
                 self._apply_backend_settings()   # Leistungsmodus wieder setzen
             output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
-        if mode == "normal" and not self.dry_run and hasattr(b, "maintain"):
+        if mode == "normal" and not self.dry_run and not self._low_power and hasattr(b, "maintain"):
             b.maintain()           # z. B. Anlaufhilfe beenden, sobald die Lüfter drehen
         rpm = b.read_fan_rpm()
         warning = self._check_effect(rpm, now, mode)
