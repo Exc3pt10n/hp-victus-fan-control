@@ -49,8 +49,6 @@ class FanService:
         self._last_sent_at = 0.0
         self._errors = 0
         self._paused = False
-        # Zuletzt an das Backend gegebener BIOS-Leistungsmodus
-        self._applied_fan_mode: str | None = config.windows.get("fan_mode") or ""
         self._config_mtime = self._mtime()
         self._last_change_at = 0.0
         self._mismatch_since: float | None = None
@@ -78,9 +76,7 @@ class FanService:
         old_windows = self.config.windows
         self.config = new
         if new.windows != old_windows:
-            self._apply_power_mode(self._override(), force=True)
-            self._last_sent = None  # neu senden
-            self._mismatch_since = None
+            self._apply_backend_settings()
         self.controller.configure(new.control, new.general["critical_temp"])
         self.toggle.configure(float(new.toggle["engage_percent"]), float(new.toggle["release_percent"]),
                               float(new.toggle["min_on_time"]))
@@ -135,8 +131,6 @@ class FanService:
         reading = Reading(_round(b.read_cpu_temp()), _round(b.read_gpu_temp()), on_battery)
         override = self._override()
         mode = override["mode"]
-        if mode != "paused" and not self._paused:
-            self._apply_power_mode(override)
         name, reason = self.active_profile_name(on_battery, override)
         profile = self.config.profile(name)
 
@@ -155,7 +149,7 @@ class FanService:
             if self._paused:
                 log.info("Steuerung fortgesetzt")
                 self._paused = False
-                self._apply_power_mode(override, force=True)
+                self._apply_backend_settings()   # Leistungsmodus wieder setzen
             output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
         if mode == "normal" and not self.dry_run and hasattr(b, "maintain"):
@@ -169,9 +163,7 @@ class FanService:
             "timestamp": time.time(),
             "mode": mode,
             "supports_level": b.supports_level,
-            "fan_mode": "" if mode == "paused" else (self._applied_fan_mode or ""),
-            "power_mode": override["power_mode"],
-            "power_modes_available": hasattr(b, "set_fan_mode"),
+            "fan_mode": "" if mode == "paused" else (self.config.windows.get("fan_mode") or ""),
             "backend": b.name,
             "profile": name,
             "profile_reason": reason,
@@ -229,23 +221,13 @@ class FanService:
         self.backend.rearm()
         self._last_sent = None       # Drehzahl sofort neu senden
 
-    def effective_windows(self, override: dict) -> dict:
-        """Windows-Einstellungen mit dem vom Benutzer gewählten Leistungsmodus."""
-        settings = dict(self.config.windows)
-        if override.get("power_mode", "auto") != "auto":
-            settings["fan_mode"] = override["power_mode"]
-        return settings
-
-    def _apply_power_mode(self, override: dict, force: bool = False) -> None:
-        settings = self.effective_windows(override)
-        wanted = settings.get("fan_mode") or ""
-        if self.dry_run or (not force and wanted == self._applied_fan_mode):
+    def _apply_backend_settings(self) -> None:
+        """[windows]-Einstellungen (u. a. BIOS-Leistungsmodus) an das Backend geben
+        - nach einer Konfig-Änderung und beim Fortsetzen nach einer Pause."""
+        if self.dry_run:
             return
-        if wanted != self._applied_fan_mode:
-            log.info("BIOS-Leistungsmodus -> %s", wanted or "(unverändert)")
-        self.backend.reconfigure(settings)
-        self._applied_fan_mode = wanted
-        self._last_sent = None      # Drehzahl im neuen Modus neu senden
+        self.backend.reconfigure(self.config.windows)
+        self._last_sent = None      # Drehzahl neu senden
         self._mismatch_since = None
 
     def _mismatch_warning(self, now: float) -> str | None:

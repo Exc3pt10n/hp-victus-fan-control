@@ -209,39 +209,31 @@ class RearmTest(unittest.TestCase):
             self.assertFalse(reset_auto_chosen_fan_mode(p))      # eigene Wahl bleibt
 
 
-class PowerModeTest(unittest.TestCase):
+class FanModeTest(unittest.TestCase):
+    """Der BIOS-Leistungsmodus kommt nur aus der Konfiguration ([windows] fan_mode)."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.override = Path(self.tmp.name) / "override.json"
         self.b = FakeBackend(level=True)
-        self.b.set_fan_mode = lambda name: None
         self.b.applied = []
         self.b.reconfigure = lambda settings: self.b.applied.append(settings.get("fan_mode"))
-        cfg = Config()
-        cfg.raw["windows"]["fan_mode"] = "default"
-        self.s = FanService(cfg, self.b, override_file=self.override)
+        self.s = FanService(Config(), self.b, override_file=self.override)
 
-    def set(self, **values):
-        self.override.write_text(json.dumps(values))
-
-    def test_user_choice_is_applied_once(self):
-        self.set(power_mode="performance")
-        self.s.step(); self.s.step()
-        self.assertEqual(self.b.applied, ["performance"])
-        self.set(power_mode="auto")             # zurück zum Wert aus der Konfiguration
+    def test_old_power_mode_choice_is_ignored(self):
+        self.override.write_text(json.dumps({"power_mode": "performance"}))   # aus Version 2.1
         status = self.s.step()
-        self.assertEqual(self.b.applied, ["performance", "default"])
+        self.assertEqual(self.b.applied, [])            # nichts umgestellt
         self.assertEqual(status["fan_mode"], "default")
 
-    def test_resume_after_pause_restores_choice(self):
-        self.set(power_mode="cool", mode="paused")
+    def test_resume_after_pause_sets_mode_again(self):
+        self.override.write_text(json.dumps({"mode": "paused"}))
         self.s.step()
         self.assertEqual(self.b.calls[-1], ("restore",))
-        self.set(power_mode="cool", mode="normal")
+        self.override.write_text(json.dumps({"mode": "normal"}))
         self.s.step()
-        self.assertEqual(self.b.applied[-1], "cool")
-
+        self.assertEqual(self.b.applied, ["default"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,7 +40,7 @@ Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktio
 (Updates, Hardware-Test, Sensoren, Konfiguration, Log, Dienst neu starten) liegen unter **Extras**.
 Schließen (✕) blendet das Fenster nur aus.
 
-Drei Einstellungen lassen sich unabhängig voneinander wählen:
+Zwei Einstellungen lassen sich wählen:
 
 **Lüfterprofil** – wie stark die Lüfter auf die Temperatur reagieren (gilt bei Steuerung „Intelligent“):
 
@@ -59,13 +59,11 @@ Drei Einstellungen lassen sich unabhängig voneinander wählen:
 | **Volle Drehzahl** | Dauerhaft Maximum (≈ 5400 U/min), z. B. beim Rendern |
 | **BIOS** | Steuerung pausiert, das BIOS regelt wie ab Werk |
 
-**Leistung (BIOS)** – derselbe Modus wie im OMEN Gaming Hub (Automatisch, Standard, Kühl,
-Performance). Gemessen mit 3DMark Speed Way und HWiNFO hat er auf dem Victus BV8D4EA **keinen
-messbaren Einfluss**: In allen drei Modi erreichen die RTX 5050 (≈ 80 W) und die CPU dieselbe
-Leistung. Die Steuerung setzt ihn trotzdem, weil das BIOS die Drehzahlvorgabe erst danach umsetzt.
-
-Die **CPU-Grenze** hängt nur an der Stromversorgung: am HP-Netzteil 54 W dauerhaft (65 W im
-Boost), an einer USB-C-Dockingstation nur 35 W.
+**Leistung:** Einen Umschalter für den BIOS-Leistungsmodus (wie im OMEN Gaming Hub) gibt es
+bewusst nicht. Gemessen mit 3DMark Speed Way bringen Standard, Performance und Kühl auf diesem
+Gerät dieselbe Punktzahl (2 284 / 2 275 / 2 275). Was die Leistung wirklich bestimmt, ist die
+**Stromversorgung**: Am HP-Netzteil darf die CPU dauerhaft 54 W aufnehmen (65 W im Boost), an
+einer USB-C-Dockingstation nur 35 W.
 
 Die Oberfläche läuft mit normalen Benutzerrechten; nur der Hintergrunddienst spricht mit
 der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
@@ -140,7 +138,6 @@ victus-fan status
 |---|---|
 | `victus-fan profile quiet\|balanced\|performance\|auto` | Profil wählen |
 | `victus-fan mode normal\|max\|paused` | Steuerung wählen (Intelligent, Volle Drehzahl, BIOS) |
-| `victus-fan power auto\|default\|cool\|performance` | Leistung (BIOS) wählen |
 | `victus-fan curve balanced` | Lüfterkurve eines Profils anzeigen |
 | `victus-fan selftest --apply` | Hardware-Test (Administrator) |
 | `victus-fan sensors --apply` | Temperaturquellen vergleichen (Administrator) |
@@ -161,7 +158,7 @@ python -m victus_fan -c config.example.toml run --backend simulate -v
 | Modul | Aufgabe |
 |---|---|
 | `controller.py` | Regelkern (Kurven, Glättung, Hysterese, Rampen) – ohne Hardware testbar |
-| `service.py` | Dienstschleife, Modi, Leistungsmodus, Selbstkontrolle |
+| `service.py` | Dienstschleife, Steuerung, Selbstkontrolle |
 | `backends/windows.py` | HP-BIOS über WMI (`hpqBIntM`); Befehlscodes aus der Community-Dokumentation (z. B. OmenMon) |
 | `gui.py` | Tray-Icon und Fenster |
 | `selftest.py`, `sensors.py` | Hardware-Test und Sensor-Test |

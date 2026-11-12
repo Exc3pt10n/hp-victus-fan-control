@@ -2,7 +2,7 @@
 
 Die Oberfläche läuft im Benutzerkontext und spricht nicht direkt mit der
 Hardware: Sie liest ``status.json`` des Dienstes und schreibt Wünsche
-(Profil, Steuerung, Leistungsmodus) nach ``override.json``.
+(Lüfterprofil, Steuerung) nach ``override.json``.
 """
 
 from __future__ import annotations
@@ -49,16 +49,6 @@ MODE_HINTS = {
     "normal": "Die Lüfter folgen dem Lüfterprofil.",
     "max": "Beide Lüfter laufen dauerhaft auf Maximum.",
     "paused": "Die Steuerung pausiert – das BIOS regelt wie ab Werk.",
-}
-POWER_LABELS = {"auto": "Automatisch", "default": "Standard", "cool": "Kühl", "performance": "Performance"}
-# Gemessen am Victus BV8D4EA (3DMark Speed Way, HWiNFO, je ein Durchlauf): in allen
-# drei Modi erreichen RTX 5050 (≈ 80 W) und CPU dieselbe Leistung. Die CPU-Grenze
-# hängt nur an der Stromversorgung (HP-Netzteil 54 W, USB-C-Dock 35 W).
-POWER_HINTS = {
-    "auto": "Wert aus der Konfiguration.",
-    "default": "Wie im OMEN Gaming Hub. Auf diesem Gerät ohne messbaren Einfluss auf die Leistung.",
-    "cool": "Wie im OMEN Gaming Hub. Auf diesem Gerät ohne messbaren Einfluss auf die Leistung.",
-    "performance": "Wie im OMEN Gaming Hub. Auf diesem Gerät ohne messbaren Einfluss auf die Leistung.",
 }
 
 
@@ -615,10 +605,8 @@ class App:
         settings = Card(outer)
         settings.pack(fill="x", pady=(10, 0))
         self.profile_seg, self.profile_hint = self._setting(settings, "Lüfterprofil", self.set_profile)
-        self.mode_seg, self.mode_hint = self._setting(settings, "Steuerung", self.set_mode)
-        self.power_seg, self.power_hint = self._setting(settings, "Leistung (BIOS)", self.set_power, last=True)
+        self.mode_seg, self.mode_hint = self._setting(settings, "Steuerung", self.set_mode, last=True)
         self.mode_seg.set_options(list(MODE_LABELS.items()))
-        self.power_seg.set_options(list(POWER_LABELS.items()))
         self._fill_profiles()
 
         # Fußzeile: Version/Update links, Extras rechts
@@ -677,7 +665,6 @@ class App:
             pystray.MenuItem("Lüfterprofil", pystray.Menu(
                 lambda: radio({n: profile_label(n) for n in self._profiles()}, "profile", self.set_profile))),
             pystray.MenuItem("Steuerung", pystray.Menu(*radio(MODE_LABELS, "mode", self.set_mode))),
-            pystray.MenuItem("Leistung (BIOS)", pystray.Menu(*radio(POWER_LABELS, "power_mode", self.set_power))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Extras", pystray.Menu(
                 pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
@@ -712,9 +699,6 @@ class App:
 
     def set_mode(self, mode: str) -> None:
         self._write(mode=mode)
-
-    def set_power(self, power: str) -> None:
-        self._write(power_mode=power)
 
     def edit_config(self) -> None:
         self._open(self.config_path)
@@ -845,11 +829,10 @@ class App:
         return None if s.get("output") == "BIOS" else s.get("fan_percent")
 
     def _render_settings(self, override: dict, s: dict | None) -> None:
-        profile, mode, power = override["profile"], override["mode"], override["power_mode"]
+        profile, mode = override["profile"], override["mode"]
         profile_active = mode == "normal"
         self.profile_seg.set(profile, enabled=profile_active)
         self.mode_seg.set(mode)
-        self.power_seg.set(power)
 
         hint = PROFILE_HINTS.get(profile, "Eigenes Profil aus der Konfiguration.")
         if profile == "auto" and s:
@@ -858,13 +841,6 @@ class App:
             hint = "Gilt nur bei Steuerung „Intelligent“."
         self.profile_hint.config(text=hint)
         self.mode_hint.config(text=MODE_HINTS[mode])
-
-        power_hint = POWER_HINTS.get(power, "")
-        if power == "auto" and s and s.get("fan_mode"):
-            current = s["fan_mode"]
-            power_hint = f"Aus der Konfiguration: {POWER_LABELS.get(current, current)} – " \
-                         f"{POWER_HINTS.get(current, '').rstrip('.')}."
-        self.power_hint.config(text=power_hint)
 
     def _set_state(self, text: str, color: str) -> None:
         self.state_dot.config(fg=color)

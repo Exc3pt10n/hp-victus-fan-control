@@ -13,7 +13,7 @@ from . import __version__, paths
 from .backends import BACKENDS, BackendError, create_backend
 from .config import load_config
 from .controller import interpolate
-from .state import MODES, POWER_MODES, read_status, write_override
+from .state import MODES, read_status, write_override
 
 
 def _setup_logging(level: str, log_file: Path | None) -> None:
@@ -65,7 +65,7 @@ def cmd_status(args) -> int:
     print(f"Stand:        {status['time']}{note}")
     print(f"Modus:        {status.get('mode', 'normal')}")
     if status.get("fan_mode"):
-        print(f"BIOS-Modus:   {status['fan_mode']} (Auswahl: {status.get('power_mode', 'auto')})")
+        print(f"BIOS-Modus:   {status['fan_mode']}")
     print(f"Backend:      {status['backend']}")
     print(f"Profil:       {status['profile']} ({status['profile_reason']})")
     print(f"CPU:          {status['cpu_temp']} °C (geglättet {status['cpu_smoothed']})")
@@ -100,19 +100,6 @@ def cmd_mode(args) -> int:
     print({"normal": "Intelligente Steuerung aktiv.",
            "max": "Lüfter laufen auf voller Drehzahl (zurück mit: victus-fan mode normal).",
            "paused": "Pausiert - das BIOS regelt (zurück mit: victus-fan mode normal)."}[args.name])
-    return 0
-
-
-def cmd_power(args) -> int:
-    try:
-        write_override(power_mode=args.name)
-    except OSError as exc:
-        print(f"Konfiguration nicht schreibbar: {exc}")
-        return 1
-    print({"auto": "BIOS-Leistungsmodus aus der Konfiguration ([windows] fan_mode).",
-           "default": "BIOS-Leistungsmodus: Standard.",
-           "cool": "BIOS-Leistungsmodus: Kühl.",
-           "performance": "BIOS-Leistungsmodus: Performance."}[args.name])
     return 0
 
 
@@ -306,13 +293,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("name")
     p.set_defaults(func=cmd_profile)
 
-    p = sub.add_parser("mode", help="Modus: normal | max (volle Drehzahl) | paused (BIOS regelt)")
+    p = sub.add_parser("mode", help="Steuerung: normal (Intelligent) | max (Volle Drehzahl) | paused (BIOS)")
     p.add_argument("name", choices=MODES)
     p.set_defaults(func=cmd_mode)
-
-    p = sub.add_parser("power", help="BIOS-Leistungsmodus: auto | default | cool | performance")
-    p.add_argument("name", choices=POWER_MODES)
-    p.set_defaults(func=cmd_power)
 
     p = sub.add_parser("gui", help="Tray-Icon und Fenster starten")
     p.add_argument("--hidden", action="store_true", help="nur Tray-Icon, Fenster nicht öffnen")
