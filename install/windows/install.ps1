@@ -262,6 +262,34 @@ try {
         installed_at = (Get-Date -Format "yyyy-MM-dd HH:mm")
         source       = $(if ($Unattended) { "auto-update" } else { "manuell" })
     } | ConvertTo-Json | Set-Content -Path (Join-Path $InstallDir "installed.json") -Encoding UTF8
+
+    # --- Eintrag in "Installierte Apps" (Einstellungen > Apps) ------------
+    Step "Trage die Lüftersteuerung in die Windows-App-Liste ein"
+    $uninstallScript = Join-Path $InstallDir "uninstall.ps1"
+    Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $uninstallScript -Force
+    $uninstallCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$uninstallScript`""
+    $sizeKb = [int]((Get-ChildItem $InstallDir -Recurse -File -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum / 1KB)
+    $appKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VictusFanControl"
+    New-Item -Path $appKey -Force | Out-Null
+    $values = [ordered]@{
+        DisplayName          = "Victus Lüftersteuerung"
+        DisplayVersion       = "$version"
+        Publisher            = "hp-victus-fan-control (GitHub)"
+        DisplayIcon          = $iconFile
+        InstallLocation      = $InstallDir
+        InstallDate          = (Get-Date -Format "yyyyMMdd")
+        URLInfoAbout         = "https://github.com/Exc3pt10n/hp-victus-fan-control"
+        UninstallString      = $uninstallCmd
+        QuietUninstallString = "$uninstallCmd -Quiet"
+    }
+    foreach ($name in $values.Keys) {
+        New-ItemProperty -Path $appKey -Name $name -Value $values[$name] -PropertyType String -Force | Out-Null
+    }
+    foreach ($name in "NoModify", "NoRepair") {
+        New-ItemProperty -Path $appKey -Name $name -Value 1 -PropertyType DWord -Force | Out-Null
+    }
+    New-ItemProperty -Path $appKey -Name "EstimatedSize" -Value $sizeKb -PropertyType DWord -Force | Out-Null
 }
 finally {
     # Die Lüftersteuerung immer wieder starten - auch wenn ein Update scheitert.

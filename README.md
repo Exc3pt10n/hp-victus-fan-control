@@ -25,7 +25,9 @@ Das **Tray-Icon** startet mit der Anmeldung (pro Benutzer, ohne Fenster). Abscha
 das unter **Extras ▸ Mit Windows starten** oder in Windows unter *Einstellungen ▸ Apps ▸
 Autostart*. Die Lüftersteuerung selbst läuft davon unabhängig immer ab dem Systemstart.
 
-Entfernen: `install\windows\uninstall.cmd` – gibt die Lüfter sofort an das BIOS zurück.
+**Entfernen:** *Einstellungen ▸ Apps ▸ Installierte Apps ▸ Victus Lüftersteuerung ▸ Deinstallieren*
+(oder `install\windows\uninstall.cmd`). Das entfernt Dienst, Tray-Icon, Autostart, Updater,
+Konfiguration und Logs und gibt die Lüfter sofort an das BIOS zurück.
 
 ## Bedienung
 
@@ -135,6 +137,9 @@ Ende der Ausgabe schicken.
 | `config.toml` | Konfiguration – Änderungen gelten nach dem Speichern sofort ([Beispiel](config.example.toml)) |
 | `victus-fan.log` | Log der Lüftersteuerung |
 | `update.log`, `update-install.log` | Log der Updates |
+
+Die Logs halten sich selbst klein: `victus-fan.log` höchstens ≈ 4 MB (1 MB + 3 ältere Dateien),
+`update.log` höchstens ≈ 1,5 MB, `update-install.log` wird bei jedem Update überschrieben.
 
 ## Kommandozeile
 
