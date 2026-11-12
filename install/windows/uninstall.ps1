@@ -39,6 +39,12 @@ foreach ($lnk in @(
     Remove-Item -Force $lnk -ErrorAction SilentlyContinue
 }
 
+# Autostart-Eintrag des Tray-Icons (pro Benutzer)
+foreach ($key in "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run",
+                 "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run") {
+    Remove-ItemProperty -Path $key -Name "Victus Lüftersteuerung" -ErrorAction SilentlyContinue
+}
+
 $binDir = Join-Path $InstallDir "bin"
 $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $newPath = (($machinePath -split ";") | Where-Object { $_ -and $_ -ne $binDir }) -join ";"

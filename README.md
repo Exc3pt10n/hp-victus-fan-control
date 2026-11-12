@@ -19,7 +19,11 @@ Der Installer installiert bei Bedarf Python 3.12, legt alles unter
 - **VictusFanControl** – die Lüftersteuerung; startet mit Windows, läuft unsichtbar als
   SYSTEM und startet sich nach einem Absturz neu
 - **VictusFanUpdate** – sucht 10 Minuten nach dem Start und danach alle 6 Stunden nach Updates
-- das **Tray-Icon** im Autostart und im Startmenü („Victus Lüftersteuerung“)
+- den Startmenü-Eintrag **Victus Lüftersteuerung** für Fenster und Tray-Icon
+
+Das **Tray-Icon** startet mit der Anmeldung (pro Benutzer, ohne Fenster). Abschalten lässt sich
+das unter **Extras ▸ Mit Windows starten** oder in Windows unter *Einstellungen ▸ Apps ▸
+Autostart*. Die Lüftersteuerung selbst läuft davon unabhängig immer ab dem Systemstart.
 
 Entfernen: `install\windows\uninstall.cmd` – gibt die Lüfter sofort an das BIOS zurück.
 
@@ -32,12 +36,13 @@ von CPU und GPU:
 
 Grün unter 70 °C · Orange ab 70 °C · Rot ab 85 °C · Grau = pausiert · Lüftersymbol = Dienst läuft nicht.
 Beim Überfahren zeigt es CPU- und GPU-Temperatur sowie die **tatsächliche Drehzahl beider Lüfter**.
-**Klick** öffnet das Fenster, **Rechtsklick** das Menü.
+**Klick** öffnet das Fenster mittig auf dem Bildschirm, **Rechtsklick** das Menü.
 
 Das Fenster zeigt Temperaturen und die gemessenen Lüfterdrehzahlen (der Balken zeigt die Drehzahl,
 der Strich darin das Ziel der Steuerung), den Verlauf der letzten 10 Minuten und die Einstellungen.
 Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktionen
-(Updates, Hardware-Test, Sensoren, Konfiguration, Log, Dienst neu starten) liegen unter **Extras**.
+(Updates, Hardware-Test, Sensoren, Konfiguration, Log, Dienst neu starten, Autostart) liegen
+unter **Extras**.
 Schließen (✕) blendet das Fenster nur aus.
 
 Zwei Einstellungen lassen sich wählen:
