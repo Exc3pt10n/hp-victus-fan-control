@@ -209,6 +209,12 @@ class FanService:
             since = getattr(self.backend, "seconds_since_mode", lambda: float("nan"))()
             log.warning("Drehzahl %s U/min weicht von der Vorgabe %s U/min ab "
                         "(%.0f s nach dem letzten Setzen des Leistungsmodus)", rpm, expected, since)
+            context = getattr(self.backend, "diagnostic_context", None)
+            if context is not None:
+                try:
+                    log.info("Umgebung: %s", context())
+                except Exception as exc:  # noqa: BLE001 - nur Zusatzinfo
+                    log.debug("Umgebungsinfo nicht lesbar: %s", exc)
         if now - self._last_rearm_at >= REARM_INTERVAL and hasattr(self.backend, "rearm"):
             self._rearm(now)
         return self._mismatch_warning(now)

@@ -23,8 +23,11 @@ Benötigt Administratorrechte (der Installer richtet den Dienst als SYSTEM ein).
 
 from __future__ import annotations
 
+import csv
 import ctypes
+import io
 import logging
+import subprocess
 import time
 
 from .base import BackendError, FanBackend
@@ -94,6 +97,24 @@ class HpBios:
         if out_size == 0:
             return []
         return list(out.Properties_.Item("Data").Value or [])
+
+
+def hp_processes() -> list[str]:
+    """Namen laufender Prozesse von HP bzw. OMEN (über tasklist)."""
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, timeout=10,
+                             creationflags=0x08000000)  # CREATE_NO_WINDOW
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names = set()
+    for row in csv.reader(io.StringIO(out.stdout.decode("mbcs" if hasattr(ctypes, "windll") else "utf-8",
+                                                       errors="replace"))):
+        if row:
+            name = row[0]
+            low = name.lower()
+            if "omen" in low or low.startswith("hp"):
+                names.add(name)
+    return sorted(names)[:12]
 
 
 class _SystemPowerStatus(ctypes.Structure):
@@ -256,7 +277,9 @@ class WindowsBackend(FanBackend):
         started = all(i < len(rpm) and rpm[i] >= SPINNING_RPM for i in self._kicking)
         if started or time.monotonic() - self._kick_started > KICK_TIMEOUT:
             if not started:
-                log.warning("Lüfter laufen trotz Anlaufhilfe nicht an (%s U/min)", rpm)
+                sent = [KICK_LEVEL if i in self._kicking else lvl for i, lvl in enumerate(self._levels)]
+                log.warning("Lüfter reagieren nicht auf die Vorgabe (Stufen %s, gemessen %s U/min) - "
+                            "vermutlich regelt gerade das BIOS selbst", sent, rpm)
             self._kicking = set()
             self.bios.call(SET_FAN_LEVEL, self._levels, out_size=0)
 
@@ -265,13 +288,30 @@ class WindowsBackend(FanBackend):
         return float("inf") if self._mode_set_at is None else time.monotonic() - self._mode_set_at
 
     def rearm(self, quiet: bool = False) -> None:
-        """Aktuellen Leistungsmodus erneut setzen - gibt die Drehzahlvorgabe wieder frei."""
+        """Aktuellen Leistungsmodus erneut setzen - gibt die Drehzahlvorgabe wieder frei.
+
+        Ohne ``quiet`` (Reaktion auf eine Abweichung) zusätzlich "Max-Lüfter aus"
+        senden: ein Versuch, das BIOS zuverlässiger aus seiner Automatik zu holen.
+        """
+        if not quiet:
+            try:
+                self.set_max(False)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("Max-Lüfter aus fehlgeschlagen: %s", exc)
         if not self._fan_mode:
             return
         try:
             self.set_fan_mode(self._fan_mode, quiet=quiet)
         except Exception as exc:  # noqa: BLE001
             log.error("Leistungsmodus '%s' konnte nicht erneut gesetzt werden: %s", self._fan_mode, exc)
+
+    def diagnostic_context(self) -> str:
+        """Kurzinfo fürs Log, wenn die Lüfter abweichen: Stromversorgung und
+        laufende HP-/OMEN-Software (könnte die Lüftersteuerung zurücksetzen)."""
+        parts = ["Akku" if self.on_battery() else "Netzteil"]
+        procs = hp_processes()
+        parts.append("HP/OMEN-Prozesse: " + (", ".join(procs) if procs else "keine"))
+        return "; ".join(parts)
 
     def set_percent(self, percent: float) -> None:
         if not self.supports_level:
