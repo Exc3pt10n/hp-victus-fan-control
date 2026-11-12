@@ -22,7 +22,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox
 
-from . import __version__, paths
+from . import __version__, autostart, paths
 from .config import load_config
 from .state import read_override, read_status, write_override
 from .updater import installed as read_installed, read_json
@@ -533,11 +533,15 @@ class App:
         if C.dark:
             _dark_title_bar(self.root)
 
+        autostart.sync()          # Autostart-Eintrag an die gemerkte Wahl angleichen
         self._build()
         self._start_tray()
         if not show and self.tray is not None:
             self.root.withdraw()
-        self.root.after(0, self.poll)
+        self.poll(reschedule=False)     # Inhalte einmal zeichnen, damit die Größe stimmt
+        if self.root.state() != "withdrawn":
+            self._center()
+        self.root.after(self.POLL_MS, self.poll)
 
     # ---- Aufbau -----------------------------------------------------------
     def _profiles(self) -> list[str]:
@@ -627,6 +631,12 @@ class App:
         menu.add_command(label="Konfiguration bearbeiten", command=self.edit_config)
         menu.add_command(label="Log öffnen", command=self.open_log)
         menu.add_command(label="Dienst neu starten", command=self.restart)
+        menu.add_separator()
+        self.autostart_var = tk.BooleanVar(value=bool(autostart.is_enabled()))
+        menu.add_checkbutton(label="Mit Windows starten", variable=self.autostart_var,
+                             command=lambda: self.set_autostart(self.autostart_var.get()),
+                             selectcolor=C.TEXT,
+                             state="normal" if autostart.is_enabled() is not None else "disabled")
         extras.config(menu=menu)
         extras.pack(side="right")
 
@@ -673,6 +683,9 @@ class App:
                 pystray.MenuItem("Konfiguration bearbeiten", call(self.edit_config)),
                 pystray.MenuItem("Log öffnen", call(self.open_log)),
                 pystray.MenuItem("Dienst neu starten", call(self.restart)),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Mit Windows starten", call(self.toggle_autostart),
+                                 checked=lambda _i: bool(autostart.is_enabled())),
             )),
             pystray.MenuItem("Tray-Icon beenden", call(self.quit)),
         )
@@ -751,8 +764,32 @@ class App:
         except OSError as exc:
             messagebox.showwarning("Victus Lüftersteuerung", str(exc))
 
+    def set_autostart(self, enabled: bool) -> None:
+        try:
+            autostart.set_enabled(enabled)
+        except OSError as exc:
+            messagebox.showwarning("Victus Lüftersteuerung", f"Autostart konnte nicht geändert werden:\n{exc}")
+        self.autostart_var.set(bool(autostart.is_enabled()))
+
+    def toggle_autostart(self) -> None:
+        self.set_autostart(not autostart.is_enabled())
+
+    def _center(self) -> None:
+        """Fenster mittig auf dem Bildschirm platzieren."""
+        r = self.root
+        r.update_idletasks()
+        min_w, min_h = r.minsize()
+        w = max(r.winfo_reqwidth(), min_w)
+        h = max(r.winfo_reqheight(), min_h)
+        x = max(0, (r.winfo_screenwidth() - w) // 2)
+        y = max(0, (r.winfo_screenheight() - h) // 2)
+        r.geometry(f"+{x}+{y}")
+
     def show(self) -> None:
         self._fill_profiles()
+        self.autostart_var.set(bool(autostart.is_enabled()))   # evtl. in Windows geändert
+        if self.root.state() == "withdrawn":
+            self._center()          # aus dem Tray geöffnet: immer mittig
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
@@ -933,8 +970,9 @@ class App:
 def main(show: bool = True, config_path: str | None = None) -> int:
     instance = SingleInstance()
     if not instance.primary:
-        instance.request_show()
-        return 0
+        if show:                 # z. B. Startmenü: laufendes Fenster nach vorn holen
+            instance.request_show()
+        return 0                 # Autostart (--hidden) läuft schon - still beenden
     App(show=show, config_path=config_path, instance=instance).run()
     # Hintergrund-Threads des Tray-Icons dürfen das Beenden nicht aufhalten.
     logging.shutdown()

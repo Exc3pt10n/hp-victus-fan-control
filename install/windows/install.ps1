@@ -191,14 +191,18 @@ try {
         Write-Host "$binDir zum PATH hinzugefügt (neue Konsole öffnen)"
     }
 
-    # --- Tray-Icon: Autostart bei Anmeldung + Startmenü ------------------
-    Step "Richte Tray-Icon und Startmenü-Eintrag ein"
+    # --- Tray-Icon: Startmenü ----------------------------------------------
+    # Den Autostart bei der Anmeldung richtet das Tray-Icon selbst pro Benutzer ein
+    # (HKCU\...\Run, abschaltbar unter Extras > "Mit Windows starten").
+    Step "Richte Startmenü-Eintrag ein"
     $iconFile = Join-Path $InstallDir "victus-fan.ico"
     $null = Invoke-Native $venvPython @("-c", "import sys; from victus_fan.gui import make_fan_image; make_fan_image(256).save(sys.argv[1], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])", $iconFile) -Quiet
     $shell = New-Object -ComObject WScript.Shell
-    $startupLnk = Join-Path ([Environment]::GetFolderPath("CommonStartup")) "Victus Lüftersteuerung.lnk"
     $menuLnk    = Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "Victus Lüftersteuerung.lnk"
-    foreach ($item in @(@($startupLnk, "-m victus_fan gui --hidden"), @($menuLnk, "-m victus_fan gui"))) {
+    # Frühere Versionen legten eine Verknüpfung im Autostart aller Benutzer an.
+    $oldStartupLnk = Join-Path ([Environment]::GetFolderPath("CommonStartup")) "Victus Lüftersteuerung.lnk"
+    Remove-Item -Force $oldStartupLnk -ErrorAction SilentlyContinue
+    foreach ($item in @(,@($menuLnk, "-m victus_fan gui"))) {
         $lnk = $shell.CreateShortcut($item[0])
         $lnk.TargetPath = $venvPythonw
         $lnk.Arguments = $item[1]
