@@ -59,14 +59,18 @@ Drei Einstellungen lassen sich unabhängig voneinander wählen:
 | **Volle Drehzahl** | Dauerhaft Maximum (≈ 5400 U/min), z. B. beim Rendern |
 | **BIOS** | Steuerung pausiert, das BIOS regelt wie ab Werk |
 
-**Leistung (BIOS)** – wie viel Leistung CPU und GPU aufnehmen dürfen (wie im OMEN Gaming Hub):
+**Leistung (BIOS)** – derselbe Modus wie im OMEN Gaming Hub. Gemessen (3DMark Speed Way) wirkt er
+nur auf die Grafikkarte:
 
 | Leistung | Bedeutung |
 |---|---|
 | **Automatisch** | Wert aus der Konfiguration (Standard) |
-| **Standard** | Normale Leistungsgrenzen |
-| **Kühl** | Weniger Leistung, kühleres Gehäuse, leiser unter Last |
-| **Performance** | Mehr Leistung für Spiele, dafür mehr Wärme und Lüfter |
+| **Standard** | RTX 5050 bis ≈ 70 W |
+| **Kühl** | Laut HP weniger Leistung und kühleres Gehäuse (nicht gemessen) |
+| **Performance** | RTX 5050 bis 80 W (Dynamic Boost) – mehr FPS, mehr Wärme |
+
+Die **CPU-Grenze** hängt dagegen nur an der Stromversorgung: am HP-Netzteil 54 W dauerhaft
+(65 W im Boost), an einer USB-C-Dockingstation nur 35 W – in jedem Leistungsmodus.
 
 Die Oberfläche läuft mit normalen Benutzerrechten; nur der Hintergrunddienst spricht mit
 der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.

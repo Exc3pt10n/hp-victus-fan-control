@@ -51,11 +51,14 @@ MODE_HINTS = {
     "paused": "Die Steuerung pausiert – das BIOS regelt wie ab Werk.",
 }
 POWER_LABELS = {"auto": "Automatisch", "default": "Standard", "cool": "Kühl", "performance": "Performance"}
+# Gemessen am Victus BV8D4EA (3DMark Speed Way, HWiNFO): "performance" lässt die
+# RTX 5050 bis 80 W statt ~70 W; die CPU-Grenze hängt nur an der Stromversorgung
+# (Netzteil 54 W, USB-C-Dock 35 W). "cool" ist nicht vermessen.
 POWER_HINTS = {
     "auto": "Wert aus der Konfiguration.",
-    "default": "Normale Leistungsgrenzen.",
-    "cool": "Weniger Leistung, kühleres Gehäuse, leiser unter Last.",
-    "performance": "Mehr Leistung für Spiele – dafür mehr Wärme und Lüfter.",
+    "default": "Grafikkarte bis ≈ 70 W. Die CPU-Grenze hängt am Netzteil (USB-C-Dock: 35 W).",
+    "cool": "Laut HP weniger Leistung und kühleres Gehäuse – auf diesem Gerät nicht gemessen.",
+    "performance": "Grafikkarte bis 80 W (Dynamic Boost) – mehr FPS, mehr Wärme. CPU unverändert.",
 }
 
 
