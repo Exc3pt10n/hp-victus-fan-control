@@ -155,6 +155,11 @@ python -m unittest
 python -m victus_fan -c config.example.toml run --backend simulate -v
 ```
 
+**Versionen:** Die Version steht in `pyproject.toml` und `victus_fan/__init__.py` (ein Test
+prüft, dass beide gleich sind). Nach jedem Merge nach `main` laufen die Tests; ist die Version
+neu, legt der Workflow [`release.yml`](.github/workflows/release.yml) den Tag `v<Version>` und ein
+GitHub-Release mit automatischen Änderungsnotizen an. Ohne Versionssprung wird nichts getaggt.
+
 | Modul | Aufgabe |
 |---|---|
 | `controller.py` | Regelkern (Kurven, Glättung, Hysterese, Rampen) – ohne Hardware testbar |

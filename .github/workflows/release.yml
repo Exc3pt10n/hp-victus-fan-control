@@ -1,0 +1,69 @@
+# Tests bei jedem Pull Request; nach einem Merge nach main zusätzlich:
+# Version aus pyproject.toml lesen und - falls neu - Tag v<Version> und
+# GitHub-Release anlegen. Ohne Versionssprung wird nichts getaggt.
+name: Tests und Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests
+        run: python -m unittest -v
+
+  tag:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Version lesen
+        id: version
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          code=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("victus_fan/__init__.py").read()).group(1))')
+          if [ "$version" != "$code" ]; then
+            echo "::error::Version in pyproject.toml ($version) und victus_fan/__init__.py ($code) unterscheiden sich"
+            exit 1
+          fi
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tag v$version existiert bereits - Version wurde nicht erhöht, kein neues Release"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag und Release anlegen
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Version ${TAG#v}" "$GITHUB_SHA"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "Version ${TAG#v}" --generate-notes --verify-tag
+          echo "::notice::$TAG getaggt und als Release veröffentlicht"
