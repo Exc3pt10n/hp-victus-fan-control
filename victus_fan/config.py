@@ -87,7 +87,8 @@ DEFAULTS: dict = {
         # Nur prüfen und im Fenster anzeigen, nicht selbst installieren.
         "check_only": False,
         "repo": "Exc3pt10n/hp-victus-fan-control",
-        # Leer = Standard-Branch des Repositories.
+        # Leer = nur freigegebene Versionen (Tags vX.Y.Z) installieren.
+        # Ein Branch-Name = jedem neuen Commit dieses Branches folgen (nur zum Testen).
         "branch": "",
     },
     "toggle": {

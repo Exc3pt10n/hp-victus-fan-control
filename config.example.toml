@@ -35,7 +35,7 @@ mode_keepalive = 50.0         # Leistungsmodus erneut setzen (sonst ignoriert da
 enabled = true                # beim Start und alle 6 Stunden nach Updates suchen
 check_only = false            # true = Update nur anzeigen, nicht installieren
 repo = "Exc3pt10n/hp-victus-fan-control"
-branch = ""                   # leer = Standard-Branch des Repositories
+branch = ""                   # leer = nur freigegebene Versionen (Tags); Branch-Name = jedem Commit folgen
 
 [toggle]                      # nur für mode = "toggle"
 engage_percent = 80.0         # ab diesem Bedarf: Max-Lüfter an

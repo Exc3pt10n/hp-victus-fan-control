@@ -2,10 +2,13 @@
 
 Ablauf (läuft als geplante Aufgabe "VictusFanUpdate" mit SYSTEM-Rechten):
 
-1. Neuesten Commit des Branches über die GitHub-API abfragen
-2. Mit dem installierten Stand (installed.json) vergleichen
-3. Bei Abweichung den Quellcode als ZIP laden und dessen eigenen Installer
-   unbeaufsichtigt ausführen (install.ps1 -Unattended)
+1. Neueste Version abfragen: das letzte GitHub-Release bzw. den höchsten Tag
+   ``vX.Y.Z`` (angelegt vom Workflow nach einem Merge in main). Nur mit
+   ``[update] branch`` wird stattdessen jeder neue Commit eines Branches verfolgt.
+2. Mit dem installierten Stand (installed.json) vergleichen - installiert wird
+   nur eine neuere Version, nie eine ältere.
+3. Den Quellcode als ZIP laden und dessen eigenen Installer unbeaufsichtigt
+   ausführen (install.ps1 -Unattended)
 
 Der Installer stoppt nur den Dienst, aktualisiert die Python-Umgebung und
 startet den Dienst wieder. Das Tray-Icon bemerkt die neue installed.json und
@@ -60,11 +63,35 @@ def _get(url: str, accept: str = "application/vnd.github+json") -> bytes:
         raise UpdateError(f"Keine Verbindung zu GitHub ({exc})") from exc
 
 
-def resolve_branch(repo: str, branch: str) -> str:
-    if branch:
-        return branch
-    info = json.loads(_get(f"{API}/repos/{repo}"))
-    return info["default_branch"]
+def parse_version(text: str | None) -> tuple[int, ...] | None:
+    """'v2.3.0' / '2.3.0' -> (2, 3, 0); alles andere -> None."""
+    if not text:
+        return None
+    parts = text.strip().lstrip("vV").split(".")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def latest_release(repo: str) -> dict:
+    """Neueste freigegebene Version: letztes Release, sonst höchster vX.Y.Z-Tag."""
+    tag, title, date = None, "", ""
+    try:
+        data = json.loads(_get(f"{API}/repos/{repo}/releases/latest"))
+        if parse_version(data.get("tag_name")):
+            tag, title, date = data["tag_name"], data.get("name") or "", data.get("published_at") or ""
+    except UpdateError as exc:
+        if "Nicht gefunden" not in str(exc):
+            raise
+    if tag is None:
+        tags = [t["name"] for t in json.loads(_get(f"{API}/repos/{repo}/tags?per_page=100"))
+                if parse_version(t.get("name"))]
+        if not tags:
+            raise UpdateError("Noch keine freigegebene Version (Tag vX.Y.Z) vorhanden")
+        tag = max(tags, key=parse_version)
+    commit = latest_commit(repo, tag)
+    return {"tag": tag, "version": ".".join(map(str, parse_version(tag))), "sha": commit["sha"],
+            "date": date or commit["date"], "message": title or f"Version {tag.lstrip('vV')}"}
 
 
 def latest_commit(repo: str, branch: str) -> dict:
@@ -150,20 +177,30 @@ def check_and_update(cfg: dict, force: bool = False, check_only: bool | None = N
                      message=f"Aktualisiert: {previous.get('latest_message', '')}")
     try:
         repo = cfg["repo"]
-        branch = resolve_branch(repo, cfg.get("branch", ""))
-        latest = latest_commit(repo, branch)
-    except (UpdateError, KeyError, ValueError) as exc:
+        if cfg.get("branch"):
+            # Sonderfall: jedem neuen Commit eines Branches folgen
+            ref = cfg["branch"]
+            latest = latest_commit(repo, ref)
+            latest["version"] = ""
+            newer = latest["sha"] != current.get("sha")
+        else:
+            latest = latest_release(repo)
+            ref = latest["tag"]
+            have = parse_version(current.get("version")) or parse_version(__version__)
+            newer = latest["sha"] != current.get("sha") and (have is None or parse_version(ref) > have)
+    except (UpdateError, KeyError, ValueError, TypeError) as exc:
         log.warning("Update-Prüfung fehlgeschlagen: %s", exc)
         return write_status(state="error", message=str(exc))
 
-    available = force or latest["sha"] != current.get("sha")
-    base = dict(branch=branch, latest_sha=latest["sha"], latest_date=latest["date"],
-                latest_message=latest["message"], installed_sha=current.get("sha", ""))
+    available = force or newer
+    base = dict(branch=ref, latest_version=latest["version"], latest_sha=latest["sha"],
+                latest_date=latest["date"], latest_message=latest["message"],
+                installed_sha=current.get("sha", ""))
     if not available:
-        log.info("Aktuell (%s)", latest["sha"][:7])
+        log.info("Aktuell (%s)", latest["version"] or latest["sha"][:7])
         return write_status(state="current", message="Aktuell", **base)
     if check_only:
-        log.info("Update verfügbar: %s", latest["sha"][:7])
+        log.info("Update verfügbar: %s", latest["version"] or latest["sha"][:7])
         return write_status(state="available", message=f"Update verfügbar: {latest['message']}", **base)
     if sys.platform != "win32":
         return write_status(state="available", message="Automatische Installation nur unter Windows", **base)
@@ -172,13 +209,13 @@ def check_and_update(cfg: dict, force: bool = False, check_only: bool | None = N
     tmp = Path(tempfile.mkdtemp(prefix="victusfan-update-"))
     try:
         src = download_source(repo, latest["sha"], tmp)
-        run_installer(src, latest["sha"], branch)
+        run_installer(src, latest["sha"], ref)
     except (UpdateError, OSError, subprocess.SubprocessError) as exc:
         log.error("Update fehlgeschlagen: %s", exc)
         return write_status(state="error", message=f"Update fehlgeschlagen: {exc}", **base)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    log.info("Update installiert: %s", latest["sha"][:7])
+    log.info("Update installiert: %s", latest["version"] or latest["sha"][:7])
     base["installed_sha"] = latest["sha"]
     return write_status(state="updated", message=f"Aktualisiert: {latest['message']}",
                         updated_at=time.strftime("%Y-%m-%d %H:%M"), **base)
