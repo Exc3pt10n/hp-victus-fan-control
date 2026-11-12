@@ -8,7 +8,9 @@ Ablauf:
 2. Max-Lüfter an (ergibt auch die echte Maximaldrehzahl)
 3. Leistungsmodi der Reihe nach setzen, bis feste Drehzahlen wirken
    (Victus BV8D4EA: das BIOS setzt sie erst nach dem Setzen eines Modus um)
-4. Niedrige Stufen im gefundenen Modus (Untergrenze, Stillstand)
+4. Niedrige Stufen im gefundenen Modus (Untergrenze, Stillstand, Anlauf aus
+   dem Stillstand - beim Victus BV8D4EA läuft ein stehender Lüfter bei
+   niedriger Stufe nicht von selbst an; die Steuerung hilft dann kurz nach)
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ class Result:
     best_fan_mode: str = ""
     level_min_test: list[int] = field(default_factory=list)
     level_zero: list[int] = field(default_factory=list)
+    start_from_stop: list[int] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     recommendation: dict = field(default_factory=dict)
 
@@ -81,7 +84,10 @@ def pause_service(say, timeout: float = 8.0) -> str:
 
 def _set_levels(backend, levels: list[int]) -> None:
     if hasattr(backend, "set_levels"):
-        backend.set_levels(levels)
+        try:
+            backend.set_levels(levels, kick=False)   # ungeschönt messen, ohne Anlaufhilfe
+        except TypeError:
+            backend.set_levels(levels)
     else:  # z. B. Simulation: arbeitet mit Prozentwerten
         backend.supports_level = True
         backend.set_percent(levels[0])
@@ -142,6 +148,10 @@ def run(backend, settle: float = 15.0, say=print) -> Result:
             r.level_min_test = _wait_and_measure(backend, settle, f"Stufe {LOW_TEST_LEVEL}", say)
             _set_levels(backend, [0, 0])
             r.level_zero = _wait_and_measure(backend, settle, "Stufe 0", say)
+            if r.level_zero and max(r.level_zero) == 0:
+                _set_levels(backend, [LOW_TEST_LEVEL, LOW_TEST_LEVEL])
+                r.start_from_stop = _wait_and_measure(
+                    backend, settle, f"Stufe {LOW_TEST_LEVEL} aus dem Stillstand", say)
     except Exception as exc:  # noqa: BLE001
         r.errors.append(f"Drehzahlvorgabe: {exc}")
     finally:
@@ -191,6 +201,10 @@ def report(r: Result, say=print) -> None:
         stops = all(x == 0 for x in r.level_zero)
         say(f"Stufe 0: {_rpm(r.level_zero)} U/min "
             f"({'Lüfter stehen still' if stops else 'BIOS hält eine Mindestdrehzahl'})")
+    if r.start_from_stop:
+        starts = all(x > 0 for x in r.start_from_stop)
+        say(f"Anlauf aus dem Stillstand: {_rpm(r.start_from_stop)} U/min "
+            f"({'läuft an' if starts else 'läuft NICHT an – die Anlaufhilfe der Steuerung übernimmt das'})")
     for e in r.errors:
         say(f"Fehler: {e}")
 

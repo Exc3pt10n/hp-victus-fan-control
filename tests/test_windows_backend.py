@@ -8,11 +8,12 @@ from victus_fan.config import DEFAULTS
 class FakeHpBios:
     def __init__(self):
         self.calls = []
+        self.rpm_levels = [27, 26]      # gemeldete Drehzahl in 100 U/min
 
     def call(self, command_type, data=None, out_size=128, command=windows.CMD_DEFAULT):
         self.calls.append((command_type, list(data or [])))
         if command_type == windows.GET_FAN_LEVEL:
-            return [27, 0]
+            return list(self.rpm_levels)
         return []
 
 
@@ -69,6 +70,39 @@ class WindowsBackendTest(unittest.TestCase):
             self.assertEqual(len(modes()), 2)            # nach 50 s erneut gesetzt
             self.assertEqual(modes()[-1], (windows.SET_FAN_MODE, [0xFF, 0x30]))
             self.assertEqual(b.bios.calls[-1][0], windows.SET_FAN_LEVEL)
+
+    def test_kick_starts_stalled_fan(self):
+        b = make()
+        b.bios.rpm_levels = [27, 0]                       # GPU-Lüfter steht
+        b.set_levels([12, 11])
+        self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [12, windows.KICK_LEVEL]))
+        self.assertTrue(b.kicking)
+        b.maintain()                                      # dreht noch nicht -> bleibt
+        self.assertEqual(b.bios.calls[-1][0], windows.GET_FAN_LEVEL)
+        b.bios.rpm_levels = [12, 25]                      # läuft jetzt
+        b.maintain()
+        self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [12, 11]))
+        self.assertFalse(b.kicking)
+
+    def test_no_kick_for_zero_or_running(self):
+        b = make()
+        b.bios.rpm_levels = [0, 0]
+        b.set_levels([0, 0])                              # Stillstand gewollt
+        self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [0, 0]))
+        b.bios.rpm_levels = [0, 0]
+        b.set_levels([12, 11], kick=False)                # Hardware-Test: ungeschönt
+        self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [12, 11]))
+
+    def test_kick_gives_up_after_timeout(self):
+        clock = [0.0]
+        with mock.patch.object(windows.time, "monotonic", lambda: clock[0]):
+            b = make()
+            b.bios.rpm_levels = [0, 0]
+            b.set_levels([12, 11])
+            clock[0] += windows.KICK_TIMEOUT + 1
+            b.maintain()
+            self.assertFalse(b.kicking)
+            self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [12, 11]))
 
 
 if __name__ == "__main__":

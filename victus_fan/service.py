@@ -16,10 +16,16 @@ from .state import DEFAULT_OVERRIDE, read_override
 
 log = logging.getLogger(__name__)
 
-# Fallen die Lüfter in die BIOS-Automatik zurück (Freigabe durch den
-# Leistungsmodus abgelaufen), wird derselbe Modus erneut gesetzt - höchstens so
-# oft hintereinander, danach erscheint eine Warnung.
-REARM_LIMIT = 3
+# Folgen die Lüfter der Vorgabe nicht (BIOS-Automatik übernimmt, Lüfter steht),
+# werden Leistungsmodus und Drehzahl erneut gesetzt - höchstens einmal pro
+# REARM_INTERVAL, aber ohne aufzugeben. Nach REARM_WARN erfolglosen Versuchen
+# in Folge erscheint zusätzlich eine Warnung.
+REARM_INTERVAL = 60.0
+REARM_WARN = 3
+# Nach einer Änderung der Vorgabe um mindestens so viele Prozentpunkte bekommen
+# die Lüfter SETTLE_TIME Sekunden Zeit, bevor verglichen wird.
+SIGNIFICANT_CHANGE = 5
+SETTLE_TIME = 20.0
 
 
 def _round(value: float | None) -> float | None:
@@ -49,6 +55,7 @@ class FanService:
         self._last_change_at = 0.0
         self._mismatch_since: float | None = None
         self._rearm_count = 0
+        self._last_rearm_at = float("-inf")
 
     # ------------------------------------------------------------------
     def _mtime(self) -> float | None:
@@ -112,7 +119,10 @@ class FanService:
                     b.set_max(command[1])
             if command != self._last_sent:
                 log.debug("Setze %s", command)
-                self._last_change_at = now
+                prev = self._last_sent
+                if (prev is None or prev[0] != command[0] or command[0] != "level"
+                        or abs(command[1] - prev[1]) >= SIGNIFICANT_CHANGE):
+                    self._last_change_at = now
             self._last_sent = command
             self._last_sent_at = now
         return f"{command[1]} %" if command[0] == "level" else ("MAX" if command[1] else "Auto")
@@ -148,6 +158,8 @@ class FanService:
                 self._apply_power_mode(override, force=True)
             output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
+        if mode == "normal" and not self.dry_run and hasattr(b, "maintain"):
+            b.maintain()           # z. B. Anlaufhilfe beenden, sobald die Lüfter drehen
         rpm = b.read_fan_rpm()
         warning = self._check_effect(rpm, now, mode)
 
@@ -173,6 +185,10 @@ class FanService:
             "output": output,
             "critical": decision.critical,
             "fan_rpm": rpm,
+            # Für die Oberfläche: Maximal- und Zieldrehzahl je Lüfter
+            "fan_max_rpm": [getattr(b, "max_cpu", 55) * 100, getattr(b, "max_gpu", 57) * 100],
+            "fan_target_rpm": (b.expected_rpm(self._last_sent[1])
+                               if self._last_sent and self._last_sent[0] == "level" else None),
             "dry_run": self.dry_run,
         }
         self._write_status(status)
@@ -185,13 +201,14 @@ class FanService:
             self._mismatch_since = None
             return None
         expected = self.backend.expected_rpm(sent[1])
-        if not rpm or not expected or now - self._last_change_at < 20:
-            # Lüfter brauchen nach einer Änderung Zeit - bisherigen Zustand behalten.
+        if (not rpm or not expected or now - self._last_change_at < SETTLE_TIME
+                or getattr(self.backend, "kicking", False)):
+            # Lüfter brauchen nach einer Änderung bzw. beim Anlaufen Zeit.
             return self._mismatch_warning(now)
         off = any(abs(r - e) > max(1000, 0.4 * e) for r, e in zip(rpm, expected))
         if not off:
             if self._mismatch_since is not None:
-                log.info("Lüfter folgen der Vorgabe wieder")
+                log.info("Lüfter folgen der Vorgabe wieder (%s U/min)", rpm)
             self._mismatch_since = None
             self._rearm_count = 0
             return None
@@ -200,20 +217,17 @@ class FanService:
             since = getattr(self.backend, "seconds_since_mode", lambda: float("nan"))()
             log.warning("Drehzahl %s U/min weicht von der Vorgabe %s U/min ab "
                         "(%.0f s nach dem letzten Setzen des Leistungsmodus)", rpm, expected, since)
-            if self._rearm():
-                return None
+        if now - self._last_rearm_at >= REARM_INTERVAL and hasattr(self.backend, "rearm"):
+            self._rearm(now)
         return self._mismatch_warning(now)
 
-    def _rearm(self) -> bool:
-        """Leistungsmodus erneut setzen, damit das BIOS die Vorgabe wieder umsetzt."""
-        if not hasattr(self.backend, "rearm") or self._rearm_count >= REARM_LIMIT:
-            return False
+    def _rearm(self, now: float) -> None:
+        """Leistungsmodus und Drehzahl erneut setzen (inkl. Anlaufhilfe)."""
         self._rearm_count += 1
-        log.info("Setze den Leistungsmodus erneut (Versuch %d von %d)", self._rearm_count, REARM_LIMIT)
+        self._last_rearm_at = now
+        log.info("Setze Leistungsmodus und Drehzahl erneut (Versuch %d)", self._rearm_count)
         self.backend.rearm()
-        self._mismatch_since = None
         self._last_sent = None       # Drehzahl sofort neu senden
-        return True
 
     def effective_windows(self, override: dict) -> dict:
         """Windows-Einstellungen mit dem vom Benutzer gewählten Leistungsmodus."""
@@ -235,10 +249,15 @@ class FanService:
         self._mismatch_since = None
 
     def _mismatch_warning(self, now: float) -> str | None:
-        if self._mismatch_since is None or now - self._mismatch_since < 30:
+        if self._mismatch_since is None:
             return None
-        return ("Die Lüfter folgen der Drehzahlvorgabe nicht, auch nicht nach erneutem Setzen "
-                "des Leistungsmodus. Bitte den Hardware-Test ausführen.")
+        if hasattr(self.backend, "rearm"):
+            if self._rearm_count < REARM_WARN:
+                return None
+        elif now - self._mismatch_since < 30:
+            return None
+        return ("Die Lüfter folgen der Drehzahlvorgabe nicht. Die Steuerung versucht es jede "
+                "Minute erneut – bleibt das so, bitte den Hardware-Test ausführen.")
 
     def _write_status(self, status: dict) -> None:
         if not self.status_file:

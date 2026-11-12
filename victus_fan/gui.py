@@ -2,7 +2,7 @@
 
 Die Oberfläche läuft im Benutzerkontext und spricht nicht direkt mit der
 Hardware: Sie liest ``status.json`` des Dienstes und schreibt Wünsche
-(Profil, Modus) nach ``override.json``.
+(Profil, Steuerung, Leistungsmodus) nach ``override.json``.
 """
 
 from __future__ import annotations
@@ -16,10 +16,11 @@ import sys
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 from . import __version__, paths
 from .config import load_config
@@ -29,29 +30,89 @@ from .updater import installed as read_installed, read_json
 log = logging.getLogger(__name__)
 
 TASK_NAME = "VictusFanControl"
+HISTORY_SECONDS = 600
+FONT = "Segoe UI"
+
+# --------------------------------------------------------------------------
+# Texte
+# --------------------------------------------------------------------------
 PROFILE_LABELS = {"auto": "Automatisch", "quiet": "Leise", "balanced": "Ausgewogen",
                   "performance": "Leistung"}
-MODE_LABELS = {"normal": "Intelligent", "max": "Volle Drehzahl", "paused": "Pause (BIOS)"}
+PROFILE_HINTS = {
+    "auto": "Ausgewogen am Netzteil, Leise im Akkubetrieb.",
+    "quiet": "Lüfter stehen unter 50 °C still und laufen danach sanft an.",
+    "balanced": "Leise im Alltag, kühlt unter Last kräftig.",
+    "performance": "Kühlt früh und stark – für Spiele und Rendering.",
+}
+MODE_LABELS = {"normal": "Intelligent", "max": "Volle Drehzahl", "paused": "BIOS"}
+MODE_HINTS = {
+    "normal": "Die Lüfter folgen dem Lüfterprofil.",
+    "max": "Beide Lüfter laufen dauerhaft auf Maximum.",
+    "paused": "Die Steuerung pausiert – das BIOS regelt wie ab Werk.",
+}
 POWER_LABELS = {"auto": "Automatisch", "default": "Standard", "cool": "Kühl", "performance": "Performance"}
 POWER_HINTS = {
-    "auto": "Wert aus der Konfiguration (vom Hardware-Test gewählt)",
-    "default": "normale Leistungsgrenzen",
-    "cool": "weniger Leistung, kühleres Gehäuse, leiser unter Last",
-    "performance": "mehr Leistung für Spiele, dafür mehr Wärme und Lüfter",
+    "auto": "Wert aus der Konfiguration.",
+    "default": "Normale Leistungsgrenzen.",
+    "cool": "Weniger Leistung, kühleres Gehäuse, leiser unter Last.",
+    "performance": "Mehr Leistung für Spiele – dafür mehr Wärme und Lüfter.",
 }
-HISTORY_SECONDS = 600
 
-# Farben
-BG = "#f4f5f7"
-CARD = "#ffffff"
-TEXT = "#1d2129"
-MUTED = "#6b7280"
-BORDER = "#e3e5e8"
+
+def profile_label(name: str) -> str:
+    return PROFILE_LABELS.get(name, name)
+
+
+# --------------------------------------------------------------------------
+# Farben: feste Statusfarben + helles/dunkles Schema passend zu Windows
+# --------------------------------------------------------------------------
 ACCENT = "#2563eb"
-CPU_COLOR = "#2563eb"
-GPU_COLOR = "#9333ea"
-FAN_COLOR = "#0d9488"
 OK, WARN, HOT, OFF = "#16a34a", "#d97706", "#dc2626", "#9ca3af"
+CPU_COLOR, GPU_COLOR, FAN_COLOR = "#3b82f6", "#a855f7", "#14b8a6"
+
+
+@dataclass
+class Theme:
+    BG: str
+    CARD: str
+    TEXT: str
+    MUTED: str
+    BORDER: str
+    TRACK: str      # Hintergrund der Umschaltfelder/Balken
+    HOVER: str
+    SELECTED: str   # gewählte Option
+    SELECTED_TEXT: str
+    BANNER_BG: str
+    BANNER_FG: str
+    BANNER_BORDER: str
+    dark: bool = False
+
+
+LIGHT = Theme(BG="#f3f4f6", CARD="#ffffff", TEXT="#111827", MUTED="#6b7280", BORDER="#e5e7eb",
+              TRACK="#e9ebef", HOVER="#dde1e7", SELECTED=ACCENT, SELECTED_TEXT="#ffffff",
+              BANNER_BG="#fff4e5", BANNER_FG="#8a4b00", BANNER_BORDER="#f5c26b")
+DARK = Theme(BG="#202020", CARD="#2b2b2b", TEXT="#f3f4f6", MUTED="#a1a1aa", BORDER="#3a3a3a",
+             TRACK="#383838", HOVER="#454545", SELECTED="#4c8df6", SELECTED_TEXT="#ffffff",
+             BANNER_BG="#3b2a12", BANNER_FG="#fcd9a4", BANNER_BORDER="#7a5520", dark=True)
+
+
+def windows_uses_dark_mode() -> bool:
+    override = os.environ.get("VICTUS_FAN_THEME")
+    if override in ("dark", "light"):
+        return override == "dark"
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
+    except OSError:
+        return False
+
+
+C: Theme = LIGHT
 
 
 def temp_color(temp: float | None) -> str:
@@ -64,8 +125,39 @@ def temp_color(temp: float | None) -> str:
     return OK
 
 
-def profile_label(name: str) -> str:
-    return PROFILE_LABELS.get(name, name)
+def temp_word(temp: float | None) -> str:
+    if temp is None:
+        return "kein Sensor"
+    if temp >= 85:
+        return "heiß"
+    if temp >= 70:
+        return "warm"
+    return "normal"
+
+
+def fmt_temp(t: float | None) -> str:
+    return "–" if t is None else f"{t:.0f} °C"
+
+
+def tray_tooltip(s: dict | None, running: bool) -> str:
+    """Text beim Überfahren des Tray-Icons (Windows kürzt nach 127 Zeichen)."""
+    if not running or not s:
+        return "Victus Lüftersteuerung\nDienst läuft nicht"
+    lines = [f"CPU {fmt_temp(s.get('cpu_temp'))} · GPU {fmt_temp(s.get('gpu_temp'))}"]
+    rpm = s.get("fan_rpm") or []
+    if rpm:
+        fans = " · ".join(f"{name} {value}" for name, value in zip(("CPU", "GPU"), rpm))
+        lines.append(f"Lüfter {fans} U/min")
+    output = s.get("output", "")
+    if s.get("mode") == "paused":
+        lines.append("Steuerung pausiert (BIOS)")
+    elif output == "MAX":
+        lines.append("Volle Drehzahl")
+    elif s.get("warning"):
+        lines.append("⚠ Lüfter folgen nicht")
+    else:
+        lines.append(f"{profile_label(s.get('profile', ''))} · Vorgabe {s.get('fan_percent', 0):.0f} %")
+    return "\n".join(["Victus Lüftersteuerung"] + lines)[:127]
 
 
 # --------------------------------------------------------------------------
@@ -192,13 +284,13 @@ def update_summary(status: dict, installed: dict | None = None) -> tuple[str, st
             if started is not None and time.time() - started > 45 * 60:
                 return f"Update hängt seit {status['checked_at']} – siehe update.log", WARN
     if not state:
-        return "Noch nicht nach Updates gesucht", MUTED
+        return "Noch nicht nach Updates gesucht", C.MUTED
     text = UPDATE_TEXT.get(state, state)
     if state == "updated" and status.get("updated_at"):
         text += f" am {status['updated_at']}"
     elif status.get("checked_at") and state in ("current", "error", "available"):
-        text += f" (geprüft {status['checked_at']})"
-    color = {"error": WARN, "available": ACCENT, "installing": ACCENT, "updated": OK}.get(state, MUTED)
+        text += f" · geprüft {status['checked_at']}"
+    color = {"error": WARN, "available": ACCENT, "installing": ACCENT, "updated": OK}.get(state, C.MUTED)
     return text, color
 
 
@@ -260,40 +352,114 @@ class SingleInstance:
 
 
 # --------------------------------------------------------------------------
-# Fenster
+# Bausteine
 # --------------------------------------------------------------------------
-class ValueCard(tk.Frame):
-    def __init__(self, master, title: str, accent: str):
-        super().__init__(master, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-        bar = tk.Frame(self, bg=accent, height=3)
-        bar.pack(fill="x")
-        tk.Label(self, text=title, bg=CARD, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(8, 0))
-        self.value = tk.Label(self, text="–", bg=CARD, fg=TEXT, font=("Segoe UI Semibold", 22))
-        self.value.pack(anchor="w", padx=12)
-        self.sub = tk.Label(self, text=" ", bg=CARD, fg=MUTED, font=("Segoe UI", 9))
-        self.sub.pack(anchor="w", padx=12, pady=(0, 10))
+class Card(tk.Frame):
+    def __init__(self, master, **kw):
+        super().__init__(master, bg=C.CARD, highlightbackground=C.BORDER, highlightthickness=1, **kw)
 
-    def set(self, value: str, sub: str = " ", color: str = TEXT) -> None:
-        self.value.config(text=value, fg=color)
+
+class Segmented(tk.Frame):
+    """Umschaltfeld im Stil von Windows 11: eine Leiste, die gewählte Option hervorgehoben."""
+
+    def __init__(self, master, command):
+        super().__init__(master, bg=C.TRACK, padx=3, pady=3)
+        self.command = command
+        self.value: str | None = None
+        self.enabled = True
+        self.items: dict[str, tk.Label] = {}
+
+    def set_options(self, options: list[tuple[str, str]]) -> None:
+        if [v for v, _ in options] == list(self.items):
+            return
+        for w in self.items.values():
+            w.destroy()
+        self.items = {}
+        for value, label in options:
+            w = tk.Label(self, text=label, font=(FONT, 9), padx=12, pady=5, cursor="hand2")
+            w.pack(side="left", padx=(0, 2))
+            w.bind("<Button-1>", lambda _e, v=value: self.command(v))
+            w.bind("<Enter>", lambda _e, v=value: self._paint(hover=v))
+            w.bind("<Leave>", lambda _e: self._paint())
+            self.items[value] = w
+        self._paint()
+
+    def set(self, value: str, enabled: bool = True) -> None:
+        if value != self.value or enabled != self.enabled:
+            self.value, self.enabled = value, enabled
+            self._paint()
+
+    def _paint(self, hover: str | None = None) -> None:
+        for value, w in self.items.items():
+            if value == self.value:
+                bg = C.SELECTED if self.enabled else C.HOVER
+                fg = C.SELECTED_TEXT if self.enabled else C.MUTED
+            else:
+                bg = C.HOVER if value == hover else C.TRACK
+                fg = C.TEXT if self.enabled else C.MUTED
+            w.config(bg=bg, fg=fg, activebackground=bg)
+
+
+class Metric(Card):
+    """Kachel: Titel, großer Wert, optional Balken, kleine Zeile."""
+
+    def __init__(self, master, title: str, accent: str, bar: bool = False):
+        super().__init__(master)
+        head = tk.Frame(self, bg=C.CARD)
+        head.pack(fill="x", padx=12, pady=(10, 0))
+        tk.Label(head, text="●", bg=C.CARD, fg=accent, font=(FONT, 8)).pack(side="left")
+        tk.Label(head, text=title, bg=C.CARD, fg=C.MUTED, font=(FONT, 9)).pack(side="left", padx=(4, 0))
+        self.value = tk.Label(self, text="–", bg=C.CARD, fg=C.TEXT, font=(FONT, 20, "bold"), anchor="w")
+        self.value.pack(fill="x", padx=12)
+        self.bar = None
+        if bar:
+            self.bar = tk.Canvas(self, height=6, width=40, bg=C.CARD, highlightthickness=0)
+            self.bar.pack(fill="x", padx=12, pady=(2, 0))
+            self.bar.bind("<Configure>", lambda _e: self._draw_bar())
+        self.sub = tk.Label(self, text=" ", bg=C.CARD, fg=C.MUTED, font=(FONT, 8), anchor="w")
+        self.sub.pack(fill="x", padx=12, pady=(2, 10))
+        self._fraction = 0.0
+        self._target: float | None = None
+        self._bar_color = accent
+
+    def set(self, value: str, sub: str = " ", color: str | None = None,
+            fraction: float | None = None, target: float | None = None) -> None:
+        self.value.config(text=value, fg=color or C.TEXT)
         self.sub.config(text=sub)
+        if self.bar is not None:
+            self._fraction = max(0.0, min(1.0, fraction or 0.0))
+            self._target = None if target is None else max(0.0, min(1.0, target))
+            self._draw_bar()
+
+    def _draw_bar(self) -> None:
+        if self.bar is None:
+            return
+        c, w = self.bar, self.bar.winfo_width()
+        c.delete("all")
+        if w < 10:
+            return
+        c.create_rectangle(0, 0, w, 6, fill=C.TRACK, width=0)
+        if self._fraction > 0:
+            c.create_rectangle(0, 0, max(3, w * self._fraction), 6, fill=self._bar_color, width=0)
+        if self._target is not None:      # Markierung: Zielwert der Steuerung
+            x = min(w - 1, max(1, w * self._target))
+            c.create_line(x, 0, x, 6, fill=C.TEXT, width=2)
 
 
 class Chart(tk.Canvas):
-    """Verlauf der letzten 10 Minuten: CPU, GPU (°C) und Lüfter (%)."""
+    """Verlauf der letzten 10 Minuten: CPU, GPU (°C) und Lüfter (% der Maximaldrehzahl)."""
 
-    PAD_L, PAD_R, PAD_T, PAD_B = 34, 10, 10, 20
+    PAD_L, PAD_R, PAD_T, PAD_B = 30, 8, 8, 18
 
     def __init__(self, master, history: deque):
-        super().__init__(master, bg=CARD, height=170, highlightthickness=1, highlightbackground=BORDER)
+        super().__init__(master, bg=C.CARD, height=140, width=300, highlightthickness=0)
         self.history = history
         self.bind("<Configure>", lambda _e: self.redraw())
 
-    def _xy(self, t: float, v: float, now: float, w: int, h: int) -> tuple[float, float]:
-        pw = w - self.PAD_L - self.PAD_R
-        ph = h - self.PAD_T - self.PAD_B
-        x = self.PAD_L + pw * (1 - (now - t) / HISTORY_SECONDS)
-        y = self.PAD_T + ph * (1 - max(0, min(100, v)) / 100)
-        return x, y
+    def _xy(self, t, v, now, w, h):
+        pw, ph = w - self.PAD_L - self.PAD_R, h - self.PAD_T - self.PAD_B
+        return (self.PAD_L + pw * (1 - (now - t) / HISTORY_SECONDS),
+                self.PAD_T + ph * (1 - max(0, min(100, v)) / 100))
 
     def redraw(self) -> None:
         self.delete("all")
@@ -301,15 +467,15 @@ class Chart(tk.Canvas):
         if w < 50:
             return
         now = time.time()
-        for v in (0, 25, 50, 75, 100):
+        for v in (0, 50, 100):
             _, y = self._xy(now, v, now, w, h)
-            self.create_line(self.PAD_L, y, w - self.PAD_R, y, fill=BORDER)
-            self.create_text(self.PAD_L - 6, y, text=str(v), anchor="e", fill=MUTED, font=("Segoe UI", 8))
-        for minutes in (10, 5, 0):
+            self.create_line(self.PAD_L, y, w - self.PAD_R, y, fill=C.BORDER)
+            self.create_text(self.PAD_L - 6, y, text=str(v), anchor="e", fill=C.MUTED, font=(FONT, 8))
+        for minutes, anchor in ((10, "sw"), (5, "s"), (0, "se")):
             x, _ = self._xy(now - minutes * 60, 0, now, w, h)
-            label = "jetzt" if minutes == 0 else f"-{minutes} min"
-            anchor = {10: "sw", 5: "s", 0: "se"}[minutes]
-            self.create_text(x, h - 4, text=label, anchor=anchor, fill=MUTED, font=("Segoe UI", 8))
+            self.create_text(x, h - 2, text="jetzt" if minutes == 0 else f"−{minutes} min",
+                             anchor=anchor, fill=C.MUTED, font=(FONT, 8))
+        drawn = False
         for index, color in ((3, FAN_COLOR), (2, GPU_COLOR), (1, CPU_COLOR)):
             points = []
             for entry in self.history:
@@ -317,12 +483,37 @@ class Chart(tk.Canvas):
                     points.extend(self._xy(entry[0], entry[index], now, w, h))
             if len(points) >= 4:
                 self.create_line(*points, fill=color, width=2, smooth=True)
+                drawn = True
+        if not drawn:
+            self.create_text(w / 2, h / 2 - 6, text="Verlauf erscheint nach einigen Sekunden",
+                             fill=C.MUTED, font=(FONT, 9))
 
 
+def _dark_title_bar(root: tk.Tk) -> None:
+    """Dunkle Titelleiste unter Windows 11 (DWMWA_USE_IMMERSIVE_DARK_MODE)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        root.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())  # type: ignore[attr-defined]
+        value = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(value), ctypes.sizeof(value))  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# --------------------------------------------------------------------------
+# Fenster
+# --------------------------------------------------------------------------
 class App:
     POLL_MS = 1000
 
     def __init__(self, show: bool, config_path: str | None, instance: SingleInstance):
+        global C
+        C = DARK if windows_uses_dark_mode() else LIGHT
+
         self.config_path = Path(config_path) if config_path else paths.CONFIG_FILE
         self.instance = instance
         self.history: deque = deque(maxlen=HISTORY_SECONDS // 2 + 10)
@@ -332,11 +523,12 @@ class App:
         self.tray = None
         self._install_mtime = self._installed_mtime()
         self._relaunch_pending = False
+        self._warning_shown = False
 
         self.root = tk.Tk()
         self.root.title("Victus Lüftersteuerung")
-        self.root.configure(bg=BG)
-        self.root.minsize(520, 720)
+        self.root.configure(bg=C.BG)
+        self.root.minsize(600, 600)   # feste Breite: das Fenster springt nicht mit der Textlänge
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         try:
             from PIL import ImageTk
@@ -345,10 +537,9 @@ class App:
             self.root.iconphoto(True, self._icon)
         except Exception:  # noqa: BLE001
             pass
+        if C.dark:
+            _dark_title_bar(self.root)
 
-        self.profile_var = tk.StringVar(value="auto")
-        self.mode_var = tk.StringVar(value="normal")
-        self.power_var = tk.StringVar(value="auto")
         self._build()
         self._start_tray()
         if not show and self.tray is not None:
@@ -363,100 +554,103 @@ class App:
             names = ["quiet", "balanced", "performance"]
         return ["auto"] + names
 
+    def _label(self, parent, text, size=9, color=None, bold=False, bg=None, **kw):
+        return tk.Label(parent, text=text, bg=bg or C.BG, fg=color or C.TEXT,
+                        font=(FONT, size, "bold") if bold else (FONT, size), **kw)
+
     def _build(self) -> None:
-        style = ttk.Style(self.root)
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-        style.configure("Seg.Toolbutton", padding=(10, 6), font=("Segoe UI", 9))
+        outer = tk.Frame(self.root, bg=C.BG)
+        outer.pack(fill="both", expand=True, padx=18, pady=14)
 
-        outer = tk.Frame(self.root, bg=BG)
-        outer.pack(fill="both", expand=True, padx=16, pady=14)
-
-        head = tk.Frame(outer, bg=BG)
+        # Kopf: Titel + verständliche Statuszeile
+        head = tk.Frame(outer, bg=C.BG)
         head.pack(fill="x")
-        tk.Label(head, text="Victus Lüftersteuerung", bg=BG, fg=TEXT,
-                 font=("Segoe UI Semibold", 14)).pack(side="left")
-        self.state_label = tk.Label(head, text="● Verbinde …", bg=BG, fg=MUTED, font=("Segoe UI", 10))
-        self.state_label.pack(side="right")
+        self._label(head, "Victus Lüftersteuerung", 14, bold=True).pack(anchor="w")
+        line = tk.Frame(head, bg=C.BG)
+        line.pack(fill="x", pady=(2, 0))
+        self.state_dot = self._label(line, "●", 9, OFF)
+        self.state_dot.pack(side="left")
+        self.state_text = self._label(line, "Verbinde …", 9, C.MUTED, wraplength=520, justify="left")
+        self.state_text.pack(side="left", padx=(4, 0))
 
-        cards = tk.Frame(outer, bg=BG)
-        cards.pack(fill="x", pady=(12, 10))
-        self.cpu_card = ValueCard(cards, "CPU", CPU_COLOR)
-        self.gpu_card = ValueCard(cards, "GPU", GPU_COLOR)
-        self.fan_card = ValueCard(cards, "Lüfter (Vorgabe)", FAN_COLOR)
-        for i, card in enumerate((self.cpu_card, self.gpu_card, self.fan_card)):
+        # Warnhinweis (nur bei Bedarf sichtbar)
+        self.banner = tk.Frame(outer, bg=C.BANNER_BG, highlightbackground=C.BANNER_BORDER, highlightthickness=1)
+        self.banner_text = tk.Label(self.banner, text="", bg=C.BANNER_BG, fg=C.BANNER_FG, font=(FONT, 9),
+                                    justify="left", anchor="w", wraplength=420)
+        self.banner_text.pack(side="left", fill="x", expand=True, padx=10, pady=8)
+        b = tk.Label(self.banner, text="Hardware-Test", bg=C.BANNER_BG, fg=C.BANNER_FG, cursor="hand2",
+                     font=(FONT, 9, "underline"))
+        b.pack(side="right", padx=10)
+        b.bind("<Button-1>", lambda _e: self.selftest())
+        self._banner_anchor = tk.Frame(outer, bg=C.BG, height=1)
+        self._banner_anchor.pack(fill="x", pady=(10, 0))
+
+        # Kennzahlen: Temperaturen und echte Lüfterdrehzahlen
+        grid = tk.Frame(outer, bg=C.BG)
+        grid.pack(fill="x")
+        self.cpu_card = Metric(grid, "CPU", CPU_COLOR)
+        self.gpu_card = Metric(grid, "GPU", GPU_COLOR)
+        self.fan1_card = Metric(grid, "CPU-Lüfter", FAN_COLOR, bar=True)
+        self.fan2_card = Metric(grid, "GPU-Lüfter", FAN_COLOR, bar=True)
+        for i, card in enumerate((self.cpu_card, self.gpu_card, self.fan1_card, self.fan2_card)):
             card.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
-            cards.columnconfigure(i, weight=1, uniform="cards")
+            grid.columnconfigure(i, weight=1, uniform="metrics")
 
-        legend = tk.Frame(outer, bg=BG)
-        legend.pack(fill="x")
-        tk.Label(legend, text="Verlauf", bg=BG, fg=TEXT, font=("Segoe UI Semibold", 10)).pack(side="left")
+        # Verlauf
+        chart_card = Card(outer)
+        chart_card.pack(fill="x", pady=(10, 0))
+        top = tk.Frame(chart_card, bg=C.CARD)
+        top.pack(fill="x", padx=12, pady=(8, 0))
+        self._label(top, "Verlauf", 9, bold=True, bg=C.CARD).pack(side="left")
         for text, color in (("Lüfter %", FAN_COLOR), ("GPU °C", GPU_COLOR), ("CPU °C", CPU_COLOR)):
-            tk.Label(legend, text=text, bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(side="right", padx=(2, 8))
-            tk.Label(legend, text="━", bg=BG, fg=color, font=("Segoe UI", 9)).pack(side="right")
-        self.chart = Chart(outer, self.history)
-        self.chart.pack(fill="x", pady=(4, 12))
+            self._label(top, text, 8, C.MUTED, bg=C.CARD).pack(side="right", padx=(2, 10))
+            self._label(top, "●", 8, color, bg=C.CARD).pack(side="right")
+        self.chart = Chart(chart_card, self.history)
+        self.chart.pack(fill="x", padx=6, pady=(2, 6))
 
-        self._section(outer, "Profil")
-        self.profile_bar = tk.Frame(outer, bg=BG)
-        self.profile_bar.pack(fill="x", pady=(4, 10))
+        # Einstellungen: drei klar getrennte Fragen, jeweils mit Erklärung
+        settings = Card(outer)
+        settings.pack(fill="x", pady=(10, 0))
+        self.profile_seg, self.profile_hint = self._setting(settings, "Lüfterprofil", self.set_profile)
+        self.mode_seg, self.mode_hint = self._setting(settings, "Steuerung", self.set_mode)
+        self.power_seg, self.power_hint = self._setting(settings, "Leistung (BIOS)", self.set_power, last=True)
+        self.mode_seg.set_options(list(MODE_LABELS.items()))
+        self.power_seg.set_options(list(POWER_LABELS.items()))
         self._fill_profiles()
 
-        self._section(outer, "Modus")
-        bar = tk.Frame(outer, bg=BG)
-        bar.pack(fill="x", pady=(4, 10))
-        for mode, label in MODE_LABELS.items():
-            ttk.Radiobutton(bar, text=label, value=mode, variable=self.mode_var, style="Seg.Toolbutton",
-                            command=lambda m=mode: self.set_mode(m)).pack(side="left", padx=(0, 4))
+        # Fußzeile: Version/Update links, Extras rechts
+        foot = tk.Frame(outer, bg=C.BG)
+        foot.pack(fill="x", side="bottom", pady=(10, 0))
+        self.update_label = self._label(foot, "", 8, C.MUTED)
+        self.update_label.pack(side="left")
+        extras = tk.Menubutton(foot, text="Extras  ▾", bg=C.TRACK, fg=C.TEXT, activebackground=C.HOVER,
+                               activeforeground=C.TEXT, relief="flat", font=(FONT, 9), padx=12, pady=4,
+                               cursor="hand2", direction="above")
+        menu = tk.Menu(extras, tearoff=False, bg=C.CARD, fg=C.TEXT, activebackground=C.SELECTED,
+                       activeforeground=C.SELECTED_TEXT, font=(FONT, 9))
+        menu.add_command(label="Nach Updates suchen", command=self.check_updates)
+        menu.add_separator()
+        menu.add_command(label="Hardware-Test …", command=self.selftest)
+        menu.add_command(label="Temperatursensoren testen …", command=self.sensor_test)
+        menu.add_separator()
+        menu.add_command(label="Konfiguration bearbeiten", command=self.edit_config)
+        menu.add_command(label="Log öffnen", command=self.open_log)
+        menu.add_command(label="Dienst neu starten", command=self.restart)
+        extras.config(menu=menu)
+        extras.pack(side="right")
 
-        self._section(outer, "Leistungsmodus (BIOS)")
-        bar = tk.Frame(outer, bg=BG)
-        bar.pack(fill="x", pady=(4, 2))
-        for power, label in POWER_LABELS.items():
-            ttk.Radiobutton(bar, text=label, value=power, variable=self.power_var, style="Seg.Toolbutton",
-                            command=lambda p=power: self.set_power(p)).pack(side="left", padx=(0, 4))
-        self.power_hint = tk.Label(outer, text="", bg=BG, fg=MUTED, font=("Segoe UI", 8), anchor="w")
-        self.power_hint.pack(fill="x", pady=(0, 10))
-
-        self.info = tk.Label(outer, text="", bg=BG, fg=MUTED, font=("Segoe UI", 9), justify="left", anchor="w")
-        self.info.pack(fill="x", pady=(2, 6))
-
-        self.warning = tk.Frame(outer, bg="#fff4e5", highlightbackground="#f5c26b", highlightthickness=1)
-        self.warning_text = tk.Label(self.warning, text="", bg="#fff4e5", fg="#8a4b00", font=("Segoe UI", 9),
-                                     justify="left", anchor="w", wraplength=300)
-        self.warning_text.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        ttk.Button(self.warning, text="Hardware-Test", command=self.selftest).pack(side="right", padx=8, pady=6)
-        self._warning_shown = False
-
-        buttons = tk.Frame(outer, bg=BG)
-        buttons.pack(fill="x", side="bottom")
-        self._buttons = buttons
-        ttk.Button(buttons, text="Konfiguration …", command=self.edit_config).pack(side="left")
-        ttk.Button(buttons, text="Log", command=self.open_log).pack(side="left", padx=6)
-        ttk.Button(buttons, text="Dienst neu starten", command=self.restart).pack(side="left")
-        ttk.Button(buttons, text="Hardware-Test", command=self.selftest).pack(side="left", padx=6)
-
-        updates = tk.Frame(outer, bg=BG)
-        updates.pack(fill="x", side="bottom", before=buttons, pady=(8, 0))
-        self.version_label = tk.Label(updates, text="", bg=BG, fg=MUTED, font=("Segoe UI", 8))
-        self.version_label.pack(side="left")
-        self.update_label = tk.Label(updates, text="", bg=BG, fg=MUTED, font=("Segoe UI", 8))
-        self.update_label.pack(side="left", padx=(6, 0))
-        link = tk.Label(updates, text="Nach Updates suchen", bg=BG, fg=ACCENT, cursor="hand2",
-                        font=("Segoe UI", 8, "underline"))
-        link.pack(side="right")
-        link.bind("<Button-1>", lambda _e: self.check_updates())
-
-    def _section(self, parent, text: str) -> None:
-        tk.Label(parent, text=text, bg=BG, fg=TEXT, font=("Segoe UI Semibold", 10)).pack(anchor="w")
+    def _setting(self, parent, title: str, command, last: bool = False):
+        box = tk.Frame(parent, bg=C.CARD)
+        box.pack(fill="x", padx=12, pady=(10, 10 if last else 0))
+        self._label(box, title, 9, bold=True, bg=C.CARD).pack(anchor="w")
+        seg = Segmented(box, command)
+        seg.pack(anchor="w", pady=(5, 3))
+        hint = self._label(box, "", 8, C.MUTED, bg=C.CARD, anchor="w", justify="left", wraplength=520)
+        hint.pack(fill="x")
+        return seg, hint
 
     def _fill_profiles(self) -> None:
-        for child in self.profile_bar.winfo_children():
-            child.destroy()
-        for name in self._profiles():
-            ttk.Radiobutton(self.profile_bar, text=profile_label(name), value=name, variable=self.profile_var,
-                            style="Seg.Toolbutton",
-                            command=lambda n=name: self.set_profile(n)).pack(side="left", padx=(0, 4))
+        self.profile_seg.set_options([(n, profile_label(n)) for n in self._profiles()])
 
     # ---- Tray -------------------------------------------------------------
     def _start_tray(self) -> None:
@@ -469,32 +663,27 @@ class App:
         def call(fn, *args):
             return lambda _icon=None, _item=None: self.calls.put((fn, args))
 
-        def profile_item(name):
-            return pystray.MenuItem(profile_label(name), call(self.set_profile, name), radio=True,
-                                    checked=lambda _i, n=name: read_override()["profile"] == n)
-
-        def power_item(power):
-            return pystray.MenuItem(POWER_LABELS[power], call(self.set_power, power), radio=True,
-                                    checked=lambda _i, p=power: read_override()["power_mode"] == p)
-
-        def mode_item(mode):
-            return pystray.MenuItem(MODE_LABELS[mode], call(self.set_mode, mode), radio=True,
-                                    checked=lambda _i, m=mode: read_override()["mode"] == m)
+        def radio(labels: dict, key: str, setter):
+            return [pystray.MenuItem(label, call(setter, value), radio=True,
+                                     checked=lambda _i, v=value: read_override()[key] == v)
+                    for value, label in labels.items()]
 
         menu = pystray.Menu(
             pystray.MenuItem("Fenster öffnen", call(self.show), default=True),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Profil", pystray.Menu(lambda: [profile_item(n) for n in self._profiles()])),
-            pystray.MenuItem("Modus", pystray.Menu(*[mode_item(m) for m in MODE_LABELS])),
-            pystray.MenuItem("Leistungsmodus", pystray.Menu(*[power_item(p) for p in POWER_LABELS])),
+            pystray.MenuItem("Lüfterprofil", pystray.Menu(
+                lambda: radio({n: profile_label(n) for n in self._profiles()}, "profile", self.set_profile))),
+            pystray.MenuItem("Steuerung", pystray.Menu(*radio(MODE_LABELS, "mode", self.set_mode))),
+            pystray.MenuItem("Leistung (BIOS)", pystray.Menu(*radio(POWER_LABELS, "power_mode", self.set_power))),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Konfiguration bearbeiten", call(self.edit_config)),
-            pystray.MenuItem("Log öffnen", call(self.open_log)),
-            pystray.MenuItem("Dienst neu starten", call(self.restart)),
-            pystray.MenuItem("Hardware-Test …", call(self.selftest)),
-            pystray.MenuItem("Temperatursensoren testen …", call(self.sensor_test)),
-            pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
-            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Extras", pystray.Menu(
+                pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
+                pystray.MenuItem("Hardware-Test …", call(self.selftest)),
+                pystray.MenuItem("Temperatursensoren testen …", call(self.sensor_test)),
+                pystray.MenuItem("Konfiguration bearbeiten", call(self.edit_config)),
+                pystray.MenuItem("Log öffnen", call(self.open_log)),
+                pystray.MenuItem("Dienst neu starten", call(self.restart)),
+            )),
             pystray.MenuItem("Tray-Icon beenden", call(self.quit)),
         )
         try:
@@ -544,8 +733,7 @@ class App:
                 "Hardware-Test",
                 "Der Test prüft etwa 1,5 Minuten lang, welche Lüfterbefehle dein Notebook wirklich "
                 "umsetzt. Die Lüfter werden dabei hörbar schneller und langsamer.\n\n"
-                "Das Ergebnis wird automatisch in die Konfiguration übernommen.\n"
-                "Bitte die Administrator-Abfrage bestätigen."):
+                "Das Ergebnis wird automatisch übernommen. Bitte die Administrator-Abfrage bestätigen."):
             return
         try:
             run_selftest(self.config_path)
@@ -555,29 +743,24 @@ class App:
     def sensor_test(self) -> None:
         if not messagebox.askokcancel(
                 "Temperatursensoren testen",
-                "Der Test listet alle Temperaturquellen auf und erzeugt dann etwa 20 Sekunden "
-                "volle CPU-Last, um zu sehen, welcher Sensor die CPU am besten abbildet.\n\n"
-                "Der beste Sensor wird automatisch übernommen.\n"
-                "Bitte die Administrator-Abfrage bestätigen."):
+                "Der Test listet alle Temperaturquellen auf und erzeugt dann etwa 20 Sekunden volle "
+                "CPU-Last, um zu sehen, welcher Sensor die CPU am besten abbildet.\n\n"
+                "Der beste Sensor wird automatisch übernommen. Bitte die Administrator-Abfrage bestätigen."):
             return
         try:
             run_elevated_console(self.config_path, "sensors --apply --wait")
         except OSError as exc:
             messagebox.showwarning("Temperatursensoren", str(exc))
 
-    def _show_warning(self, text: str | None) -> None:
-        if text:
-            self.warning_text.config(text=text)
-            if not self._warning_shown:
-                self.warning.pack(fill="x", pady=(0, 10), before=self._buttons)
-                self._warning_shown = True
-        elif self._warning_shown:
-            self.warning.pack_forget()
-            self._warning_shown = False
-
     def restart(self) -> None:
         try:
             restart_service()
+        except OSError as exc:
+            messagebox.showwarning("Victus Lüftersteuerung", str(exc))
+
+    def check_updates(self) -> None:
+        try:
+            start_update_check()
         except OSError as exc:
             messagebox.showwarning("Victus Lüftersteuerung", str(exc))
 
@@ -592,12 +775,6 @@ class App:
             self.quit()
         else:
             self.root.withdraw()
-
-    def check_updates(self) -> None:
-        try:
-            start_update_check()
-        except OSError as exc:
-            messagebox.showwarning("Victus Lüftersteuerung", str(exc))
 
     # ---- Neustart nach Update ---------------------------------------------
     @staticmethod
@@ -644,86 +821,121 @@ class App:
         self._render_update()
 
         override = read_override()
-        self.profile_var.set(override["profile"])
-        self.mode_var.set(override["mode"])
-        self.power_var.set(override["power_mode"])
-        self.power_hint.config(text=POWER_HINTS.get(override["power_mode"], ""))
-
         status = read_status()
         self.status = status
         running = status is not None and not status["stale"]
         if running and status["timestamp"] != self.last_ts:
             self.last_ts = status["timestamp"]
-            fan = 100.0 if status["output"] == "MAX" else (None if status["output"] == "BIOS"
-                                                             else status["fan_percent"])
-            self.history.append((status["timestamp"], status["cpu_temp"], status["gpu_temp"], fan))
+            self.history.append((status["timestamp"], status["cpu_temp"], status["gpu_temp"],
+                                 self._fan_percent(status)))
+        self._render_settings(override, status if running else None)
         self._render(status, running)
         if reschedule:
             self.root.after(self.POLL_MS, self.poll)
 
+    @staticmethod
+    def _fan_percent(s: dict) -> float | None:
+        """Tatsächliche Lüfterleistung in % der Maximaldrehzahl (für den Verlauf)."""
+        rpm, top = s.get("fan_rpm") or [], s.get("fan_max_rpm") or []
+        if rpm and top and len(rpm) == len(top):
+            return 100 * max(r / t for r, t in zip(rpm, top) if t)
+        return None if s.get("output") == "BIOS" else s.get("fan_percent")
+
+    def _render_settings(self, override: dict, s: dict | None) -> None:
+        profile, mode, power = override["profile"], override["mode"], override["power_mode"]
+        profile_active = mode == "normal"
+        self.profile_seg.set(profile, enabled=profile_active)
+        self.mode_seg.set(mode)
+        self.power_seg.set(power)
+
+        hint = PROFILE_HINTS.get(profile, "Eigenes Profil aus der Konfiguration.")
+        if profile == "auto" and s:
+            hint += f" Gerade: {profile_label(s['profile'])} ({s['profile_reason']})."
+        if not profile_active:
+            hint = "Gilt nur bei Steuerung „Intelligent“."
+        self.profile_hint.config(text=hint)
+        self.mode_hint.config(text=MODE_HINTS[mode])
+
+        power_hint = POWER_HINTS.get(power, "")
+        if power == "auto" and s and s.get("fan_mode"):
+            current = s["fan_mode"]
+            power_hint = f"Aus der Konfiguration: {POWER_LABELS.get(current, current)} – " \
+                         f"{POWER_HINTS.get(current, '').rstrip('.')}."
+        self.power_hint.config(text=power_hint)
+
+    def _set_state(self, text: str, color: str) -> None:
+        self.state_dot.config(fg=color)
+        self.state_text.config(text=text, fg=C.TEXT if color != OFF else C.MUTED)
+
+    def _show_banner(self, text: str | None) -> None:
+        if text:
+            self.banner_text.config(text=text)
+            if not self._warning_shown:
+                self.banner.pack(fill="x", pady=(10, 0), before=self._banner_anchor)
+                self._warning_shown = True
+        elif self._warning_shown:
+            self.banner.pack_forget()
+            self._warning_shown = False
+
     def _render(self, s: dict | None, running: bool) -> None:
         if not running:
-            self._show_warning(None)
-            self.state_label.config(text="● Dienst läuft nicht", fg=HOT)
-            for card in (self.cpu_card, self.gpu_card, self.fan_card):
-                card.set("–", " ", MUTED)
-            self.info.config(text="Der Hintergrunddienst sendet keine Daten. "
-                                  "„Dienst neu starten“ versuchen oder Log prüfen.")
-            self._update_tray(None, "normal", False, "Victus: Dienst läuft nicht")
+            self._show_banner(None)
+            self._set_state("Dienst läuft nicht – Extras ▸ „Dienst neu starten“ oder Log prüfen", HOT)
+            for card in (self.cpu_card, self.gpu_card, self.fan1_card, self.fan2_card):
+                card.set("–", " ", C.MUTED)
+            self._update_tray(None, "normal", False, tray_tooltip(None, False))
             self.chart.redraw()
             return
 
         mode = s.get("mode", "normal")
+        battery = " · Akkubetrieb" if s.get("on_battery") else ""
         if s.get("critical"):
-            self.state_label.config(text="● Kritisch heiß – volle Drehzahl", fg=HOT)
+            self._set_state("Kritisch heiß – Lüfter auf voller Drehzahl", HOT)
         elif s.get("warning"):
-            self.state_label.config(text="● Lüfter folgen nicht", fg=WARN)
+            self._set_state("Lüfter folgen der Vorgabe nicht", WARN)
         elif mode == "paused":
-            self.state_label.config(text="● Pausiert – BIOS regelt", fg=WARN)
+            self._set_state("Pausiert – das BIOS regelt die Lüfter", WARN)
         elif mode == "max":
-            self.state_label.config(text="● Volle Drehzahl", fg=WARN)
+            self._set_state("Volle Drehzahl" + battery, WARN)
         else:
-            self.state_label.config(text="● Aktiv", fg=OK)
+            self._set_state(f"Läuft · {profile_label(s['profile'])}{battery}", OK)
+        self._show_banner(s.get("warning"))
 
-        def fmt(t):
-            return "–" if t is None else f"{t:.0f} °C"
+        for card, key in ((self.cpu_card, "cpu_temp"), (self.gpu_card, "gpu_temp")):
+            t = s.get(key)
+            card.set(fmt_temp(t), temp_word(t), temp_color(t) if t is not None else C.MUTED)
 
         rpm = s.get("fan_rpm") or []
-        self.cpu_card.set(fmt(s["cpu_temp"]), f"geglättet {fmt(s['cpu_smoothed'])}", temp_color(s["cpu_temp"]))
-        self.gpu_card.set(fmt(s["gpu_temp"]),
-                          "kein Sensor" if s["gpu_temp"] is None else f"geglättet {fmt(s['gpu_smoothed'])}",
-                          temp_color(s["gpu_temp"]))
-        output = s["output"]
-        fan_text = {"MAX": "MAX", "BIOS": "BIOS", "Auto": "Auto"}.get(output, f"{s['fan_percent']:.0f} %")
-        # Wert = Vorgabe der Steuerung, Unterzeile = tatsächlich gemessene Drehzahl
-        self.fan_card.set(fan_text, ("gemessen " + " / ".join(map(str, rpm)) + " U/min") if rpm else " ",
-                          WARN if s.get("warning") else TEXT)
-        self._show_warning(s.get("warning"))
+        top = s.get("fan_max_rpm") or [5400, 5200]
+        target = s.get("fan_target_rpm")
+        output = s.get("output", "")
+        for i, card in enumerate((self.fan1_card, self.fan2_card)):
+            if i >= len(rpm):
+                card.set("–", "keine Daten", C.MUTED)
+                continue
+            if output == "BIOS":
+                sub = "U/min · BIOS regelt"
+            elif output == "MAX":
+                sub = "U/min · Maximum"
+            elif target and i < len(target):
+                sub = f"U/min · Ziel {target[i]:,}".replace(",", ".")
+            else:
+                sub = f"U/min · Vorgabe {s.get('fan_percent', 0):.0f} %"
+            mark = None if not target or i >= len(target) or output in ("BIOS", "MAX") else target[i] / top[i]
+            card.set(f"{rpm[i]:,}".replace(",", "."), sub, WARN if s.get("warning") else None,
+                     fraction=rpm[i] / top[i] if i < len(top) and top[i] else 0, target=mark)
 
-        if self.power_var.get() == "auto" and s.get("fan_mode"):
-            self.power_hint.config(text=f"aus der Konfiguration: {POWER_LABELS.get(s['fan_mode'], s['fan_mode'])} "
-                                        f"– {POWER_HINTS.get(s['fan_mode'], '')}")
-        method = "stufenlos" if s.get("supports_level", True) else "Max an/aus (BIOS-Automatik dazwischen)"
-        if s.get("fan_mode"):
-            method += f" · BIOS-Modus {POWER_LABELS.get(s['fan_mode'], s['fan_mode'])}"
-        self.info.config(text=f"Profil {profile_label(s['profile'])} ({s['profile_reason']})  ·  "
-                              f"Bedarf {s['demand_percent']:.0f} %  ·  Steuerung: {method}"
-                              + ("  ·  Akkubetrieb" if s.get("on_battery") else ""))
-        temps = [t for t in (s["cpu_temp"], s["gpu_temp"]) if t is not None]
-        hottest = max(temps) if temps else None
-        # Das Tray-Icon zeigt immer die höchste Temperatur (CPU oder GPU).
-        tip = (f"Victus: max. {fmt(hottest)}\nCPU {fmt(s['cpu_temp'])} · GPU {fmt(s['gpu_temp'])}"
-               f" · Lüfter {fan_text}")
-        self._update_tray(hottest, mode, True, tip)
+        temps = [t for t in (s.get("cpu_temp"), s.get("gpu_temp")) if t is not None]
+        self._update_tray(max(temps) if temps else None, mode, True, tray_tooltip(s, True))
         if self.root.state() != "withdrawn":
             self.chart.redraw()
 
     def _render_update(self) -> None:
         info = read_installed()
         sha = (info.get("sha") or "")[:7]
-        self.version_label.config(text=f"v{__version__}" + (f" ({sha})" if sha else ""))
         text, color = update_summary(read_json(paths.UPDATE_STATUS), info)
-        self.update_label.config(text="· " + text, fg=color)
+        self.update_label.config(text=f"v{__version__}" + (f" ({sha})" if sha else "") + f"  ·  {text}",
+                                 fg=color if color != C.MUTED else C.MUTED)
 
     def _update_tray(self, temp, mode, running, tip) -> None:
         if self.tray is None:
@@ -733,7 +945,7 @@ class App:
             self._tray_key = key
             self.tray.icon = make_tray_image(temp, mode, running)
         if self.tray.title != tip:
-            self.tray.title = tip[:120]
+            self.tray.title = tip
 
     def run(self) -> None:
         self.root.mainloop()

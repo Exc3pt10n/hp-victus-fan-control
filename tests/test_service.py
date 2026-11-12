@@ -183,11 +183,19 @@ class RearmTest(unittest.TestCase):
         self.assertEqual(b.rearms, 1)
         self.assertIsNone(status["warning"])
 
-    def test_warning_after_limit(self):
+    def test_keeps_trying_and_warns(self):
         b, s = self.make(follows_after_rearm=False)
         status = self.run_for(s, 400)
-        self.assertEqual(b.rearms, 3)
+        self.assertGreater(b.rearms, 3)                   # gibt nicht auf (1x pro Minute)
+        self.assertLessEqual(b.rearms, 400 // 60 + 1)
         self.assertIsNotNone(status["warning"])
+
+    def test_small_changes_do_not_delay_check(self):
+        b, s = self.make(follows_after_rearm=True)
+        temps = iter([65.0, 66.0] * 200)                  # ständige kleine Schwankung
+        b.read_cpu_temp = lambda: next(temps)
+        self.run_for(s, 60)
+        self.assertGreaterEqual(b.rearms, 1)              # Abweichung trotzdem erkannt
 
     def test_auto_chosen_mode_is_reset_once(self):
         from victus_fan.config import reset_auto_chosen_fan_mode

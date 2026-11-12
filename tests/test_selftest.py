@@ -50,6 +50,7 @@ class SelftestTest(unittest.TestCase):
         self.assertEqual(r.recommendation, {"mode": "level", "fan_mode": "default",
                                             "max_level_cpu": 54, "max_level_gpu": 52, "min_level": 0})
         self.assertEqual(r.level_zero, [0, 0])
+        self.assertEqual(r.start_from_stop, [1100, 1100])
         self.assertEqual(bios.mode_calls[-1], "default")     # am Ende zurückgesetzt
 
     def test_falls_back_to_next_mode(self):
@@ -95,6 +96,17 @@ class SelftestTest(unittest.TestCase):
         self.assertEqual(list(r.mode_levels), ["-"])
         self.assertEqual(r.recommendation["mode"], "level")
         self.assertNotIn("fan_mode", r.recommendation)
+    def test_fan_does_not_start_from_standstill(self):
+        class Sticky(FakeBios):
+            def set_levels(self, levels):
+                before = list(self.rpm)
+                super().set_levels(levels)
+                # stehende Lüfter laufen unter Stufe 20 nicht an
+                self.rpm = [0 if b == 0 and lvl < 20 else r for b, lvl, r in zip(before, levels, self.rpm)]
+        r = run(Sticky())
+        self.assertEqual(r.start_from_stop, [0, 0])
+        self.assertEqual(r.recommendation["mode"], "level")
+
 
 if __name__ == "__main__":
     unittest.main()

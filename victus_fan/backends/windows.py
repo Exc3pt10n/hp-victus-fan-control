@@ -48,6 +48,12 @@ FAN_MODES = {
 
 SIGN = [0x53, 0x45, 0x43, 0x55]  # "SECU"
 
+# Anlaufhilfe: Ein stehender Lüfter läuft bei niedriger Vorgabe (≈ 1100 U/min)
+# nicht von selbst an. Er bekommt dann kurz diese Stufe, bis er dreht.
+KICK_LEVEL = 30          # ≈ 3000 U/min
+SPINNING_RPM = 500       # ab hier gilt ein Lüfter als laufend
+KICK_TIMEOUT = 15.0      # danach Anlaufhilfe abbrechen (Lüfter defekt/blockiert?)
+
 
 class HpBios:
     """Dünne Hülle um hpqBIntM.hpqBIOSIntXXX."""
@@ -111,6 +117,9 @@ class WindowsBackend(FanBackend):
         self._bios_temp_ok: bool | None = None   # wird beim ersten Lesen geprüft
         self._fan_mode: str = ""
         self._mode_set_at: float | None = None
+        self._levels: list[int] | None = None     # zuletzt vorgegebene Stufen
+        self._kicking: set[int] = set()            # Lüfter mit aktiver Anlaufhilfe
+        self._kick_started = 0.0
         self._cpu_sensor_id = "auto"
         self._cpu_sensor = None
         self._sensors: dict | None = None
@@ -210,13 +219,46 @@ class WindowsBackend(FanBackend):
             return None  # bei Stufe 0 entscheidet das BIOS (Stillstand oder Minimum)
         return [lvl * 100 for lvl in levels]
 
-    def set_levels(self, levels: list[int]) -> None:
-        """Lüfterstufen direkt setzen (auch für den Hardware-Test)."""
+    def set_levels(self, levels: list[int], kick: bool = True) -> None:
+        """Lüfterstufen setzen. Mit ``kick`` bekommen stehende Lüfter, die laufen
+        sollen, kurz eine höhere Stufe (Anlaufhilfe, siehe ``maintain``)."""
         if self._max_active:
             self.set_max(False)
         if self._fan_mode and self.seconds_since_mode() >= self.mode_keepalive:
             self.rearm(quiet=True)
-        self.bios.call(SET_FAN_LEVEL, levels, out_size=0)
+        self._levels = list(levels)
+        actual = list(levels)
+        if kick:
+            rpm = self.read_fan_rpm()
+            stalled = {i for i, lvl in enumerate(levels)
+                       if 0 < lvl < KICK_LEVEL and i < len(rpm) and rpm[i] < SPINNING_RPM}
+            if stalled:
+                if not self._kicking:
+                    self._kick_started = time.monotonic()
+                    log.info("Anlaufhilfe für Lüfter %s (stehen, Vorgabe %s)",
+                             ", ".join(("CPU", "GPU")[i] for i in sorted(stalled)), levels)
+                self._kicking = stalled
+                for i in stalled:
+                    actual[i] = KICK_LEVEL
+            else:
+                self._kicking = set()
+        self.bios.call(SET_FAN_LEVEL, actual, out_size=0)
+
+    @property
+    def kicking(self) -> bool:
+        return bool(self._kicking)
+
+    def maintain(self) -> None:
+        """Bei jedem Messzyklus: Anlaufhilfe beenden, sobald die Lüfter drehen."""
+        if not self._kicking or self._levels is None:
+            return
+        rpm = self.read_fan_rpm()
+        started = all(i < len(rpm) and rpm[i] >= SPINNING_RPM for i in self._kicking)
+        if started or time.monotonic() - self._kick_started > KICK_TIMEOUT:
+            if not started:
+                log.warning("Lüfter laufen trotz Anlaufhilfe nicht an (%s U/min)", rpm)
+            self._kicking = set()
+            self.bios.call(SET_FAN_LEVEL, self._levels, out_size=0)
 
     def seconds_since_mode(self) -> float:
         """Sekunden seit dem letzten Setzen des Leistungsmodus (inf = nie)."""

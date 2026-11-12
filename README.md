@@ -31,12 +31,18 @@ von CPU und GPU:
 ![Tray-Icons](docs/tray-icons.png)
 
 Grün unter 70 °C · Orange ab 70 °C · Rot ab 85 °C · Grau = pausiert · Lüftersymbol = Dienst läuft nicht.
-**Klick** öffnet das Fenster, **Rechtsklick** das Menü. Das Fenster zeigt aktuelle Werte und den
-Verlauf der letzten 10 Minuten; Schließen (✕) blendet es nur aus.
+Beim Überfahren zeigt es CPU- und GPU-Temperatur sowie die **tatsächliche Drehzahl beider Lüfter**.
+**Klick** öffnet das Fenster, **Rechtsklick** das Menü.
+
+Das Fenster zeigt Temperaturen und die gemessenen Lüfterdrehzahlen (der Balken zeigt die Drehzahl,
+der Strich darin das Ziel der Steuerung), den Verlauf der letzten 10 Minuten und die Einstellungen.
+Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktionen
+(Updates, Hardware-Test, Sensoren, Konfiguration, Log, Dienst neu starten) liegen unter **Extras**.
+Schließen (✕) blendet das Fenster nur aus.
 
 Drei Einstellungen lassen sich unabhängig voneinander wählen:
 
-**Profil** – wie stark die Lüfter auf die Temperatur reagieren:
+**Lüfterprofil** – wie stark die Lüfter auf die Temperatur reagieren (gilt bei Steuerung „Intelligent“):
 
 | Profil | Verhalten |
 |---|---|
@@ -45,17 +51,17 @@ Drei Einstellungen lassen sich unabhängig voneinander wählen:
 | **Ausgewogen** | Mindestens 20 % (≈ 1100 U/min, leiser als die BIOS-Automatik), steigt ab 50 °C |
 | **Leistung** | Mindestens 30 %, steigt früher und steiler |
 
-**Modus** – wer die Lüfter steuert:
+**Steuerung** – wer die Lüfter steuert:
 
-| Modus | Bedeutung |
+| Steuerung | Bedeutung |
 |---|---|
-| **Intelligent** | Regelung nach Profil |
+| **Intelligent** | Regelung nach Lüfterprofil |
 | **Volle Drehzahl** | Dauerhaft Maximum (≈ 5400 U/min), z. B. beim Rendern |
-| **Pause (BIOS)** | Das BIOS regelt wie ab Werk |
+| **BIOS** | Steuerung pausiert, das BIOS regelt wie ab Werk |
 
-**Leistungsmodus (BIOS)** – wie viel Leistung CPU und GPU aufnehmen dürfen (wie im OMEN Gaming Hub):
+**Leistung (BIOS)** – wie viel Leistung CPU und GPU aufnehmen dürfen (wie im OMEN Gaming Hub):
 
-| Leistungsmodus | Bedeutung |
+| Leistung | Bedeutung |
 |---|---|
 | **Automatisch** | Wert aus der Konfiguration (Standard) |
 | **Standard** | Normale Leistungsgrenzen |
@@ -74,16 +80,19 @@ der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
   dann sanft mit 3 %/s.
 - **Sicherheit:** Ab 92 °C oder ohne Sensordaten sofort volle Drehzahl. Nach wiederholten
   Fehlern übernimmt wieder das BIOS; dessen Überhitzungsschutz bleibt immer aktiv.
-- **Selbstkontrolle:** Die gemessene Drehzahl wird laufend mit der Vorgabe verglichen. Fallen
-  die Lüfter in die BIOS-Automatik zurück, setzt die Steuerung den Leistungsmodus sofort neu;
-  hilft das dreimal nicht, erscheint eine Warnung im Fenster.
+- **Anlaufhilfe:** Ein stehender Lüfter läuft bei niedriger Drehzahl nicht von selbst an. Er
+  bekommt dann kurz ≈ 3000 U/min, bis er dreht, und läuft danach mit der Zieldrehzahl.
+- **Selbstkontrolle:** Die gemessene Drehzahl wird laufend mit der Vorgabe verglichen. Weicht
+  sie ab, setzt die Steuerung Leistungsmodus und Drehzahl neu – jede Minute, bis es wieder
+  passt. Nach drei erfolglosen Versuchen erscheint zusätzlich ein Hinweis im Fenster.
 
 Gemessene Eigenschaften des Victus BV8D4EA (Ryzen 5 240, RTX 5050):
 
 | | |
 |---|---|
 | Lüfter | 1100 bis 5400 / 5200 U/min stufenlos, Stufe 0 = Stillstand |
-| Drehzahlvorgabe | wirkt nur, solange ein BIOS-Leistungsmodus kürzlich gesetzt wurde – die Steuerung setzt ihn deshalb etwa alle 50 s neu (welcher Modus, ist egal) |
+| Drehzahlvorgabe | wirkt erst, nachdem ein BIOS-Leistungsmodus gesetzt wurde – die Steuerung setzt ihn beim Start und etwa alle 50 s |
+| Anlauf | ein stehender Lüfter startet bei ≈ 1100 U/min nicht von selbst – daher die Anlaufhilfe |
 | CPU-Temperatur | der HP-BIOS-Sensor liefert nichts; die ACPI-Zone `THRM` folgt der CPU (Tctl) mit etwa 3 °C Abstand |
 | GPU-Temperatur | über `nvidia-smi` |
 
@@ -131,8 +140,8 @@ victus-fan status
 | Befehl | Wirkung |
 |---|---|
 | `victus-fan profile quiet\|balanced\|performance\|auto` | Profil wählen |
-| `victus-fan mode normal\|max\|paused` | Modus wählen |
-| `victus-fan power auto\|default\|cool\|performance` | BIOS-Leistungsmodus wählen |
+| `victus-fan mode normal\|max\|paused` | Steuerung wählen (Intelligent, Volle Drehzahl, BIOS) |
+| `victus-fan power auto\|default\|cool\|performance` | Leistung (BIOS) wählen |
 | `victus-fan curve balanced` | Lüfterkurve eines Profils anzeigen |
 | `victus-fan selftest --apply` | Hardware-Test (Administrator) |
 | `victus-fan sensors --apply` | Temperaturquellen vergleichen (Administrator) |
