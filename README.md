@@ -99,11 +99,13 @@ Neue Versionen werden automatisch installiert, deine Einstellungen bleiben erhal
 Tray-Icon startet sich danach selbst neu. Version und Update-Status stehen unten im Fenster;
 dort und im Tray-Menü gibt es **Nach Updates suchen**.
 
-Verfolgt wird der Standard-Branch von
-[`Exc3pt10n/hp-victus-fan-control`](https://github.com/Exc3pt10n/hp-victus-fan-control).
-Abschalten oder auf „nur anzeigen“ stellen lässt es sich unter `[update]` in der Konfiguration.
+Installiert werden nur **freigegebene Versionen**: die Tags `vX.Y.Z` bzw. GitHub-Releases von
+[`Exc3pt10n/hp-victus-fan-control`](https://github.com/Exc3pt10n/hp-victus-fan-control), die der
+Workflow nach einem Merge in `main` anlegt. Commits ohne neue Version werden nicht verteilt,
+und auf eine ältere Version wird nie zurückgestuft. Unter `[update]` in der Konfiguration lässt
+sich das abschalten, auf „nur anzeigen“ stellen oder – zum Testen – einem Branch folgen.
 
-> **Wichtig:** Updates laufen mit SYSTEM-Rechten und installieren, was auf dem Branch liegt.
+> **Wichtig:** Updates laufen mit SYSTEM-Rechten und installieren, was als Version getaggt wird.
 > Halte den Schreibzugriff auf das Repository daher auf dich beschränkt.
 
 ## Tests bei Problemen
