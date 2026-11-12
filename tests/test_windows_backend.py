@@ -104,6 +104,27 @@ class WindowsBackendTest(unittest.TestCase):
             self.assertFalse(b.kicking)
             self.assertEqual(b.bios.calls[-1], (windows.SET_FAN_LEVEL, [12, 11]))
 
+    def test_rearm_sends_max_off_then_mode(self):
+        b = make()
+        b.bios.calls.clear()
+        b.rearm()
+        self.assertEqual(b.bios.calls, [(windows.SET_MAX_FAN, [0]), (windows.SET_FAN_MODE, [0xFF, 0x30])])
+        b.bios.calls.clear()
+        b.rearm(quiet=True)                               # regelmäßiges Auffrischen: nur Modus
+        self.assertEqual(b.bios.calls, [(windows.SET_FAN_MODE, [0xFF, 0x30])])
+
+    def test_hp_processes(self):
+        out = ('"System","4","Services","0","1.234 K"\r\n'
+               '"OmenCommandCenterBackground.exe","812","Console","1","50.000 K"\r\n'
+               '"HPSystemEventUtilityHost.exe","900","Console","1","10.000 K"\r\n'
+               '"chrome.exe","1000","Console","1","90.000 K"\r\n').encode()
+        result = mock.Mock(stdout=out)
+        with mock.patch.object(windows.subprocess, "run", return_value=result):
+            self.assertEqual(windows.hp_processes(),
+                             ["HPSystemEventUtilityHost.exe", "OmenCommandCenterBackground.exe"])
+        with mock.patch.object(windows.subprocess, "run", side_effect=OSError("kein tasklist")):
+            self.assertEqual(windows.hp_processes(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

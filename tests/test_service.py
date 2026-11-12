@@ -1,4 +1,5 @@
 import json
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -234,6 +235,59 @@ class FanModeTest(unittest.TestCase):
         self.override.write_text(json.dumps({"mode": "normal"}))
         self.s.step()
         self.assertEqual(self.b.applied, ["default"])
+
+class StandbyTest(unittest.TestCase):
+    """Im Standby regelt die Firmware; nach dem Aufwachen wird sofort neu gesetzt."""
+
+    class Events:
+        def __init__(self):
+            self.queue = []
+
+        def pop(self):
+            events, self.queue = self.queue, []
+            return events
+
+    def setUp(self):
+        self.b = FakeBackend(level=True)
+        self.b.temp = 65.0
+        self.b.rearms = 0
+        self.b.rearm = lambda: setattr(self.b, "rearms", self.b.rearms + 1)
+        self.b.expected_rpm = lambda p: [int(54 * p), int(52 * p)]
+        self.b.read_fan_rpm = lambda: [2700, 0]           # Firmware regelt selbst
+        self.events = self.Events()
+        self.s = FanService(Config(), self.b, power_events=self.events)
+
+    def run_for(self, start, seconds):
+        status = None
+        with mock.patch("victus_fan.service.time.monotonic", side_effect=list(range(start, start + seconds, 2))):
+            for _ in range(0, seconds, 2):
+                status = self.s.step()
+        return status
+
+    def test_no_warnings_or_rearms_while_display_off(self):
+        self.events.queue = ["display_off"]
+        status = self.run_for(0, 400)
+        self.assertEqual(self.b.rearms, 0)
+        self.assertIsNone(status["warning"])
+        self.assertTrue(status["low_power"])
+
+    def test_wake_takes_control_back_immediately(self):
+        self.events.queue = ["suspend"]
+        self.run_for(0, 10)
+        self.events.queue = ["resume"]
+        before = len(self.b.calls)
+        status = self.run_for(10, 2)
+        self.assertEqual(self.b.rearms, 1)
+        self.assertFalse(status["low_power"])
+        self.assertGreater(len(self.b.calls), before)      # Drehzahl sofort neu gesendet
+
+    def test_long_gap_counts_as_resume(self):
+        self.run_for(0, 4)
+        wall = [time.time() + 600]                         # 10 Minuten keine Messung
+        with mock.patch("victus_fan.service.time.time", lambda: wall[0]):
+            self.run_for(4, 2)
+        self.assertEqual(self.b.rearms, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
