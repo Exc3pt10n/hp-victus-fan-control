@@ -221,17 +221,12 @@ try {
         Write-Warning "Ordnerrechte für $DataDir konnten nicht gesetzt werden"
     }
     $configFile = Join-Path $DataDir "config.toml"
-    if (-not (Test-Path $configFile)) {
-        Copy-Item (Join-Path $RepoDir "config.example.toml") $configFile
-        Write-Host "config.toml angelegt"
-    } else {
-        # Ältere Dateien auf den aktuellen Aufbau bringen: eigene Werte bleiben, veraltete
-        # Einträge fallen weg, die alte Datei wird als config.toml.bak gesichert.
-        $template = Join-Path $RepoDir "config.example.toml"
-        if ((Invoke-Native $venvPython @("-m", "victus_fan", "--config", $configFile, "migrate-config",
-                "--template", $template)) -ne 0) {
-            Write-Warning "Konfiguration konnte nicht aktualisiert werden - die bisherige bleibt unverändert"
-        }
+    # Anlegen bzw. ältere Dateien auf den aktuellen Aufbau bringen: eigene Werte
+    # bleiben, veraltete Einträge fallen weg, die alte Datei wird als
+    # config.toml.bak gesichert. Die Vorlage liegt im installierten Paket.
+    if ((Invoke-Native $venvPython @("-m", "victus_fan", "--config", $configFile, "migrate-config")) -ne 0) {
+        if (-not (Test-Path $configFile)) { throw "config.toml konnte nicht angelegt werden" }
+        Write-Warning "Konfiguration konnte nicht aktualisiert werden - die bisherige bleibt unverändert"
     }
     # Normale Benutzer dürfen Profil/Modus umschalten und die Konfiguration bearbeiten.
     $override = Join-Path $DataDir "override.json"

@@ -204,8 +204,7 @@ def cmd_selftest(args) -> int:
         try:
             # Geprüft speichern: ein unplausibler Messwert darf die Datei nicht ungültig machen.
             from .config import HARDWARE_TEST_VERSION
-            save_settings(args.config, {"windows": dict(rec, hardware_test=HARDWARE_TEST_VERSION)},
-                          note="vom Hardware-Test gesetzt")
+            save_settings(args.config, {"windows": dict(rec, hardware_test=HARDWARE_TEST_VERSION)})
             print(f"\nEinstellungen in {args.config} gespeichert: {rec}")
             print("Der Dienst übernimmt sie automatisch innerhalb weniger Sekunden.")
         except Exception as exc:  # noqa: BLE001
@@ -282,8 +281,7 @@ def cmd_sensors(args) -> int:
 
     if best and args.apply:
         try:
-            save_settings(args.config, {"windows": {"cpu_sensor": best["id"]}},
-                          note="von 'victus-fan sensors' gewählt")
+            save_settings(args.config, {"windows": {"cpu_sensor": best["id"]}})
             print(f"\nIn {args.config} als CPU-Quelle gespeichert - der Dienst übernimmt sie sofort.")
         except (OSError, ValueError) as exc:
             print(f"\nKonnte die Konfiguration nicht speichern: {exc}")
@@ -387,7 +385,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_sensors)
 
     p = sub.add_parser("migrate-config", help="config.toml auf den aktuellen Aufbau bringen (Installer)")
-    p.add_argument("--template", required=True, help="Pfad zur config.example.toml")
+    p.add_argument("--template", help="andere Vorlage als die mitgelieferte (nur für Tests)")
     p.set_defaults(func=cmd_migrate_config)
 
     p = sub.add_parser("curve", help="Lüfterkurve eines Profils anzeigen")

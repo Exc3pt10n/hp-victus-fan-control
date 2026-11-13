@@ -3,7 +3,7 @@ import unittest
 import tempfile
 from pathlib import Path
 
-from victus_fan.config import DEFAULTS, Config, Profile, load_config
+from victus_fan.config import DEFAULTS, TEMPLATE as ROOT_TEMPLATE, Config, Profile, load_config
 from victus_fan.controller import SAFETY_FLOOR, FanController, Reading, ToggleAdapter, interpolate
 
 
@@ -132,7 +132,7 @@ class ToggleTest(unittest.TestCase):
 
 class ConfigTest(unittest.TestCase):
     def test_example_config_loads(self):
-        cfg = load_config("config.example.toml")
+        cfg = load_config(ROOT_TEMPLATE)
         self.assertEqual(cfg.general["profile"], "balanced")
         self.assertIn("quiet", cfg.raw["profiles"])
 

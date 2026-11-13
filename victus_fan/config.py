@@ -256,14 +256,17 @@ def load_config(path: str | Path | None) -> Config:
         return Config(path=path)
     with path.open("rb") as fh:
         user = tomllib.load(fh)
-    cfg = Config(raw=_merge(DEFAULTS, user), path=path)
-    validate(cfg.raw)
-    # Profile früh prüfen, damit Fehler beim Start auffallen.
-    for name in cfg.raw["profiles"]:
-        cfg.profile(name)
-    for key in ("profile", "battery_profile"):
-        cfg.profile(cfg.general[key])
-    return cfg
+    return config_from_dict(user, path)
+
+
+# --------------------------------------------------------------------------
+# Schreiben: Die Datei wird immer komplett aus der Vorlage erzeugt - gleicher
+# Aufbau, gleiche Reihenfolge, ausgerichtete Kommentare. Egal ob das
+# Einstellungsfenster, der Hardware-/Sensor-Test oder ein Update schreibt.
+# --------------------------------------------------------------------------
+TEMPLATE = Path(__file__).with_name("config.example.toml")
+COMMENT_COLUMN = 30
+SECTIONS = ("general", "control", "windows", "update", "toggle")
 
 
 def _toml_value(value) -> str:
@@ -295,64 +298,139 @@ def _comment_start(line: str) -> int | None:
     return None
 
 
-def update_config_values(path: str | Path, section: str, values: dict, note: str = "") -> None:
-    """Setzt einzelne Werte in einer Sektion der config.toml und lässt den Rest
-    (inkl. Kommentaren) unverändert."""
-    path = Path(path)
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    comment = f"  # {note}" if note else ""
-    header = f"[{section}]"
-    start = next((i for i, l in enumerate(lines) if l.strip().split("#")[0].strip() == header), None)
-    if start is None:
-        lines += ["", header] + [f"{k} = {_toml_value(v)}{comment}" for k, v in values.items()]
-    else:
-        end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")), len(lines))
-        pending = dict(values)
-        for i in range(start + 1, end):
-            key = lines[i].split("=")[0].strip()
-            if "=" in lines[i] and not lines[i].lstrip().startswith("#") and key in pending:
-                new = f"{key} = {_toml_value(pending.pop(key))}"
-                if note:
-                    new += comment
-                else:
-                    # Erklärenden Kommentar der Zeile behalten (Spalte wie bisher)
-                    col = _comment_start(lines[i])
-                    if col is not None:
-                        new = new.ljust(col - 1) + " " + lines[i][col:]
-                lines[i] = new
-        for offset, (k, v) in enumerate(pending.items()):
-            lines.insert(start + 1 + offset, f"{k} = {_toml_value(v)}{comment}")
-    text = "\n".join(lines) + "\n"
-    tomllib.loads(text)  # nur gültiges TOML schreiben
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+def _line(key: str, value, comment: str = "") -> str:
+    text = f"{key} = {_toml_value(value)}"
+    return f"{text.ljust(COMMENT_COLUMN - 1)} {comment}" if comment else text
 
 
-def save_settings(path: str | Path, changes: dict[str, dict], note: str = "") -> Config:
-    """Mehrere Sektionen auf einmal ändern (Einstellungsfenster).
+def render_config(user: dict, template: str | None = None) -> str:
+    """Formatierte config.toml: Vorlage mit den Werten aus ``user`` (geladenes TOML).
 
-    Die Änderungen werden zuerst in einer Kopie geschrieben und mit
-    ``load_config`` geprüft; nur eine gültige Konfiguration ersetzt das Original.
-    Gibt die neue Konfiguration zurück, wirft ValueError bei ungültigen Werten.
+    Jeder Eintrag der Vorlage bekommt den Wert des Benutzers bzw. den Standard,
+    weitere bekannte Einträge mit eigenem Wert werden in ihrer Sektion ergänzt,
+    eigene bzw. geänderte Profile folgen am Ende. Unbekannte Einträge entfallen.
     """
-    import shutil
-    import tempfile
+    if template is None:
+        template = TEMPLATE.read_text(encoding="utf-8-sig")
 
+    def value(section, key):
+        given = user.get(section) if isinstance(user.get(section), dict) else {}
+        return given.get(key, DEFAULTS[section][key])
+
+    out: list[str] = []
+    section = None
+    written: set[str] = set()
+
+    def finish_section():
+        # Bekannte Einträge, die in der Vorlage fehlen, aber vom Standard abweichen
+        if section in SECTIONS:
+            extra = [_line(k, value(section, k)) for k in DEFAULTS[section]
+                     if k not in written and value(section, k) != DEFAULTS[section][k]]
+            while out and not out[-1].strip():
+                out.pop()
+            out.extend(extra)
+            out.append("")
+
+    for raw in template.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("["):
+            finish_section()
+            section = stripped.split("]")[0].lstrip("[").strip()
+            written = set()
+            out.append(raw)
+            continue
+        col = _comment_start(raw)
+        code = (raw if col is None else raw[:col]).strip()
+        if "=" in code and not stripped.startswith("#"):
+            key = code.split("=")[0].strip()
+            comment = raw[col:].strip() if col is not None else ""
+            if section is None and key == "config_version":
+                out.append(_line(key, CONFIG_VERSION, comment))
+                continue
+            if section in SECTIONS and key in DEFAULTS[section]:
+                out.append(_line(key, value(section, key), comment))
+                written.add(key)
+                continue
+        out.append(raw.rstrip())
+    finish_section()
+
+    profiles = user.get("profiles") if isinstance(user.get("profiles"), dict) else {}
+    for name, profile in profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        curves = {k: profile[k] for k in ("cpu_curve", "gpu_curve") if k in profile}
+        default = DEFAULT_PROFILES.get(name)
+        if default and all(curves.get(k) == default[k] for k in ("cpu_curve", "gpu_curve")):
+            continue                        # unverändertes Standardprofil: steht im Programm
+        out.append(f"[profiles.{name}]")
+        out.extend(_line(k, v) for k, v in curves.items())
+        out.append("")
+    while out and not out[-1].strip():
+        out.pop()
+    return "\n".join(out) + "\n"
+
+
+def config_from_dict(user: dict, path: Path | None = None) -> Config:
+    """Konfiguration aus geladenem TOML bilden und vollständig prüfen."""
+    cfg = Config(raw=_merge(DEFAULTS, user), path=path)
+    validate(cfg.raw)
+    for name in cfg.raw["profiles"]:
+        cfg.profile(name)
+    for key in ("profile", "battery_profile"):
+        cfg.profile(cfg.general[key])
+    return cfg
+
+
+def write_config(path: str | Path, user: dict) -> Config:
+    """``user`` prüfen, formatiert schreiben und die Konfiguration zurückgeben.
+    Wirft ValueError, ohne die Datei anzufassen, wenn etwas ungültig ist."""
     path = Path(path)
-    with tempfile.TemporaryDirectory() as tmp:
-        draft = Path(tmp) / "config.toml"
-        if path.exists():
-            shutil.copyfile(path, draft)
-        for section, values in changes.items():
-            if values:
-                update_config_values(draft, section, values, note=note)
-        try:
-            cfg = load_config(draft)
-        except (ValueError, KeyError, tomllib.TOMLDecodeError) as exc:
-            raise ValueError(f"Ungültige Einstellung: {exc}") from exc
-        text = draft.read_text(encoding="utf-8")
+    text = render_config(user)
+    try:
+        cfg = config_from_dict(tomllib.loads(text), path)
+    except (ValueError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"Ungültige Einstellung: {exc}") from exc
     path.parent.mkdir(parents=True, exist_ok=True)
     # Direkt schreiben (nicht ersetzen), damit die Dateirechte für Benutzer erhalten bleiben.
     path.write_text(text, encoding="utf-8")
-    cfg.path = path
     return cfg
+
+
+def read_user_values(path: str | Path) -> dict:
+    """Die in der Datei stehenden Werte (ohne Standardwerte); {} wenn sie fehlt."""
+    path = Path(path)
+    if not path.exists():
+        return {}
+    try:
+        return tomllib.loads(path.read_text(encoding="utf-8-sig"))
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"Die Konfiguration ist nicht lesbar ({exc}) - bitte als Textdatei korrigieren") from exc
+
+
+def save_settings(path: str | Path, changes: dict[str, dict]) -> Config:
+    """Einzelne Werte ändern (Einstellungsfenster, Hardware- und Sensor-Test).
+
+    ``changes`` = {"general": {...}, "profiles.quiet": {"cpu_curve": ...}, ...}.
+    Geschrieben wird die ganze Datei formatiert neu; ist das Ergebnis ungültig,
+    bleibt sie unverändert und es gibt einen ValueError.
+    """
+    user = read_user_values(path)
+    version = user.get("config_version", 0)
+    if user and (not isinstance(version, int) or isinstance(version, bool) or version < CONFIG_VERSION):
+        # Datei im alten Format (Migration beim Update fehlgeschlagen o. Ä.): erst
+        # umstellen, sonst gingen z. B. die Vermerke des Hardware-Tests verloren.
+        from .migrate import migrate_config
+        migrate_config(path)
+        user = read_user_values(path)
+    user = copy.deepcopy(user)
+    for section, values in changes.items():
+        if not values:
+            continue
+        if section.startswith("profiles."):
+            target = user.setdefault("profiles", {}).setdefault(section.split(".", 1)[1], {})
+        else:
+            target = user.setdefault(section, {})
+            if not isinstance(target, dict):
+                target = user[section] = {}
+        target.update(values)
+    return write_config(path, user)

@@ -179,7 +179,7 @@ Ende der Ausgabe schicken.
 
 | Datei in `C:\ProgramData\VictusFan` | Inhalt |
 |---|---|
-| `config.toml` | Konfiguration – am einfachsten über Extras ▸ Einstellungen; Änderungen gelten sofort ([Beispiel](config.example.toml)) |
+| `config.toml` | Konfiguration – am einfachsten über Extras ▸ Einstellungen; Änderungen gelten sofort ([Vorlage](victus_fan/config.example.toml)) |
 | `config.toml.bak` | Stand vor der letzten Anpassung durch ein Update |
 | `victus-fan.log` | Log der Lüftersteuerung |
 | `update.log`, `update-install.log` | Log der Updates |
@@ -213,7 +213,7 @@ python -m unittest
 ```
 
 ```bash
-python -m victus_fan -c config.example.toml run --backend simulate -v
+python -m victus_fan -c victus_fan/config.example.toml run --backend simulate -v
 ```
 
 **Versionen:** Die Version steht in `pyproject.toml` und `victus_fan/__init__.py` (ein Test

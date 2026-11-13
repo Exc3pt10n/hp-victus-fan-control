@@ -1,8 +1,8 @@
 """Einstellungsfenster: bearbeitet die config.toml, ohne dass man sie öffnen muss.
 
-Geändert werden nur Werte, die sich wirklich geändert haben; Kommentare und
-alles andere in der Datei bleiben erhalten. ``save_settings`` prüft die
-Änderung vorab in einer Kopie. Der Dienst übernimmt die neue Konfiguration
+Übergeben werden nur Werte, die sich wirklich geändert haben. ``save_settings``
+prüft das Ergebnis und schreibt die Datei formatiert aus der Vorlage neu (gleicher
+Aufbau, ausgerichtete Kommentare). Der Dienst übernimmt die neue Konfiguration
 automatisch innerhalb weniger Sekunden.
 """
 

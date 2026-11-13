@@ -143,21 +143,6 @@ class EffectTest(unittest.TestCase):
         self.assertIsNone(status["warning"])
 
 
-class ConfigUpdateTest(unittest.TestCase):
-    def test_update_keeps_comments_and_adds_keys(self):
-        from victus_fan.config import update_config_values
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "config.toml"
-            p.write_text(Path("config.example.toml").read_text(encoding="utf-8"), encoding="utf-8")
-            update_config_values(p, "windows", {"mode": "toggle", "max_level_cpu": 49}, note="Test")
-            cfg = load_config(p)
-            self.assertEqual(cfg.windows["mode"], "toggle")
-            self.assertEqual(cfg.windows["max_level_cpu"], 49)
-            self.assertIn("# Eigene Profile", p.read_text(encoding="utf-8"))
-            update_config_values(p, "neu", {"x": 1})
-            self.assertIn("[neu]", p.read_text(encoding="utf-8"))
-
-
 class RearmTest(unittest.TestCase):
     """Fallen die Lüfter in die BIOS-Automatik zurück, wird derselbe
     BIOS-Modus erneut gesetzt - kein Wechsel zu einem anderen Modus."""

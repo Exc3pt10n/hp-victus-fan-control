@@ -1,6 +1,6 @@
 """Bringt eine vorhandene config.toml beim Update auf den aktuellen Stand.
 
-Die Datei wird aus der aktuellen Vorlage (config.example.toml) neu erzeugt:
+Die Datei wird aus der aktuellen Vorlage neu erzeugt (``render_config``):
 aktuelle Kommentare und Einträge, dazu die eigenen Werte des Benutzers.
 
 * Übernommen werden gültige Werte, die vom Standard abweichen, und eigene bzw.
@@ -20,13 +20,12 @@ Der Installer ruft das als Administrator auf (``victus-fan migrate-config``).
 from __future__ import annotations
 
 import copy
-import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import (CONFIG_VERSION, DEFAULT_PROFILES, DEFAULTS, HARDWARE_TEST_VERSION, _validate_curve,
-                     load_config, update_config_values, validate)
+from .config import (CONFIG_VERSION, DEFAULT_PROFILES, DEFAULTS, HARDWARE_TEST_VERSION, TEMPLATE,
+                     _validate_curve, config_from_dict, render_config, validate)
 
 TEST_NOTE = "vom Hardware-Test gesetzt"
 # Vom Hardware-Test gemessen - nur mit Nachweis übernehmen (siehe oben).
@@ -41,10 +40,13 @@ class Migration:
     dropped: list[str] = field(default_factory=list)     # entfallen (veraltet/ungültig)
     backup: Path | None = None
     hardware_tested: bool = False
+    created: bool = False
 
     def summary(self) -> str:
         if not self.changed:
             return "Konfiguration ist aktuell."
+        if self.created:
+            return "config.toml angelegt."
         lines = ["Konfiguration auf den aktuellen Stand gebracht"
                  + (f" (Sicherung: {self.backup.name})" if self.backup else "") + "."]
         if self.kept:
@@ -118,24 +120,33 @@ def _collect(user: dict, tested: bool, result: Migration) -> dict[str, dict]:
     return changes
 
 
-def _render(template: str, changes: dict[str, dict], scratch: Path) -> str:
-    text = re.sub(r"(?m)^config_version\s*=.*$", f"config_version = {CONFIG_VERSION}", template)
-    if not re.search(r"(?m)^config_version\s*=", text):
-        text = f"config_version = {CONFIG_VERSION}\n" + text
-    scratch.write_text(text, encoding="utf-8")
+def _render(template: str, changes: dict[str, dict]) -> str:
+    """Formatierte Datei aus den gesammelten Werten; wirft ValueError, wenn ungültig."""
+    user: dict = {}
     for section, values in changes.items():
-        update_config_values(scratch, section, values)
-    return scratch.read_text(encoding="utf-8")
+        if section.startswith("profiles."):
+            user.setdefault("profiles", {})[section.split(".", 1)[1]] = values
+        else:
+            user[section] = values
+    text = render_config(user, template)
+    try:
+        config_from_dict(tomllib.loads(text))
+    except (KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(str(exc)) from exc
+    return text
 
 
-def migrate_config(path: str | Path, template: str | Path) -> Migration:
-    """``path`` auf den Aufbau von ``template`` bringen (siehe Moduldoku)."""
-    path, template_text = Path(path), Path(template).read_text(encoding="utf-8-sig")
+def migrate_config(path: str | Path, template: str | Path | None = None) -> Migration:
+    """``path`` auf den Aufbau der Vorlage bringen (siehe Moduldoku); fehlt die
+    Datei, wird sie aus der Vorlage angelegt."""
+    path = Path(path)
+    template_text = Path(template or TEMPLATE).read_text(encoding="utf-8-sig")
     result = Migration()
     if not path.exists():
-        path.write_text(_render(template_text, {}, path.with_suffix(".tmp")), encoding="utf-8")
-        path.with_suffix(".tmp").unlink(missing_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_render(template_text, {}), encoding="utf-8")
         result.changed = True
+        result.created = True
         return result
 
     text = path.read_text(encoding="utf-8-sig")
@@ -151,25 +162,24 @@ def migrate_config(path: str | Path, template: str | Path) -> Migration:
     result.hardware_tested = user is not None and _hardware_tested(text, user)
     changes = _collect(user, result.hardware_tested, result) if user is not None else {}
 
-    scratch = path.with_name(path.name + ".neu")
     try:
-        new_text = _render(template_text, changes, scratch)
-        try:
-            load_config(scratch)
-        except (ValueError, KeyError, tomllib.TOMLDecodeError):
-            # Einzeln gültig, zusammen nicht (z. B. Profilverweise, toggle-Grenzen):
-            # dann nur die Hardware-Werte und eigenen Kurven behalten.
-            keep = {k: v for k, v in changes.items() if k == "windows" or k.startswith("profiles.")}
-            dropped = [f"[{k}]" for k in changes if k not in keep]
-            new_text = _render(template_text, keep, scratch)
-            load_config(scratch)
-            result.dropped += [f"Einstellungen {', '.join(dropped)} (passten nicht zusammen)"]
-            result.kept = [k for k in result.kept if k.startswith(("windows.", "Profil "))]
-    finally:
-        scratch.unlink(missing_ok=True)
+        new_text = _render(template_text, changes)
+    except ValueError:
+        # Einzeln gültig, zusammen nicht (z. B. Profilverweise, toggle-Grenzen):
+        # dann nur die Hardware-Werte und eigenen Kurven behalten.
+        keep = {k: v for k, v in changes.items() if k == "windows" or k.startswith("profiles.")}
+        dropped = [f"[{k}]" for k in changes if k not in keep]
+        new_text = _render(template_text, keep)
+        result.dropped += [f"Einstellungen {', '.join(dropped)} (passten nicht zusammen)"]
+        result.kept = [k for k in result.kept if k.startswith(("windows.", "Profil "))]
 
     result.backup = path.with_name(path.name + ".bak")
-    result.backup.write_text(text, encoding="utf-8")
+    try:
+        result.backup.write_text(text, encoding="utf-8")
+    except OSError:
+        # Als normaler Benutzer (Speichern im Einstellungsfenster) darf im
+        # Datenordner keine neue Datei angelegt werden - dann ohne Sicherung.
+        result.backup = None
     # Direkt schreiben (nicht ersetzen), damit die Dateirechte für Benutzer bleiben.
     path.write_text(new_text, encoding="utf-8")
     result.changed = True

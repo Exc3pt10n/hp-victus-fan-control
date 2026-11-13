@@ -7,7 +7,7 @@ from victus_fan.config import CONFIG_VERSION, HARDWARE_TEST_VERSION, load_config
 from victus_fan.migrate import migrate_config
 
 ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE = ROOT / "config.example.toml"
+TEMPLATE = ROOT / "victus_fan" / "config.example.toml"
 LEGACY = ROOT / "tests" / "legacy_configs"
 
 

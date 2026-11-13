@@ -1,6 +1,8 @@
 # Konfiguration der Victus-Lüftersteuerung
 # Ort: C:\ProgramData\VictusFan\config.toml
-# Änderungen werden nach dem Speichern automatisch übernommen.
+# Änderungen werden nach dem Speichern automatisch übernommen. Einstellungsfenster,
+# Hardware- und Sensor-Test schreiben die Datei immer in diesem Aufbau neu - eigene
+# Kommentare bleiben dabei nicht erhalten.
 # Fehlt ein Wert, gilt der eingebaute Standard. Ist die Datei fehlerhaft,
 # bleibt die bisherige Einstellung aktiv (Hinweis im Fenster und im Log).
 
