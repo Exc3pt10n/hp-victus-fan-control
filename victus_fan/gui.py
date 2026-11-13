@@ -623,6 +623,7 @@ class App:
         self.status: dict | None = None
         self.calls: queue.Queue = queue.Queue()
         self.tray = None
+        self.settings = None             # offenes Einstellungsfenster
         self._install_mtime = self._installed_mtime()
         self._relaunch_pending = False
         self._warning_shown = False
@@ -741,12 +742,13 @@ class App:
                                cursor="hand2", direction="above")
         menu = tk.Menu(extras, tearoff=False, bg=C.CARD, fg=C.TEXT, activebackground=C.SELECTED,
                        activeforeground=C.SELECTED_TEXT, font=(FONT, 9))
+        menu.add_command(label="Einstellungen …", command=self.open_settings)
+        menu.add_separator()
         menu.add_command(label="Nach Updates suchen", command=self.check_updates)
         menu.add_separator()
         menu.add_command(label="Hardware-Test …", command=self.selftest)
         menu.add_command(label="Temperatursensoren testen …", command=self.sensor_test)
         menu.add_separator()
-        menu.add_command(label="Konfiguration bearbeiten", command=self.edit_config)
         menu.add_command(label="Log öffnen", command=self.open_log)
         menu.add_command(label="Dienst neu starten", command=self.restart)
         menu.add_separator()
@@ -806,10 +808,11 @@ class App:
                              checked=lambda _i: read_override()["mode"] != "paused"),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Extras", pystray.Menu(
+                pystray.MenuItem("Einstellungen …", call(self.open_settings)),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
                 pystray.MenuItem("Hardware-Test …", call(self.selftest)),
                 pystray.MenuItem("Temperatursensoren testen …", call(self.sensor_test)),
-                pystray.MenuItem("Konfiguration bearbeiten", call(self.edit_config)),
                 pystray.MenuItem("Log öffnen", call(self.open_log)),
                 pystray.MenuItem("Dienst neu starten", call(self.restart)),
                 pystray.Menu.SEPARATOR,
@@ -859,6 +862,20 @@ class App:
 
     def edit_config(self) -> None:
         self._open(self.config_path)
+
+    def open_settings(self) -> None:
+        """Einstellungsfenster öffnen (oder nach vorn holen, falls schon offen)."""
+        from .settings_dialog import SettingsDialog
+
+        self.show()
+        if self.settings is not None:
+            self.settings.win.lift()
+            self.settings.win.focus_force()
+            return
+        try:
+            self.settings = SettingsDialog(self)
+        except Exception:  # noqa: BLE001 - Fehler wurde im Dialog bereits gemeldet
+            self.settings = None
 
     def open_log(self) -> None:
         if paths.LOG_FILE.exists():

@@ -45,8 +45,21 @@ der Strich darin das Ziel der Steuerung), den Verlauf der letzten 10 Minuten und
 Fährt man mit der Maus über den Verlauf, zeigt er für den Zeitpunkt Temperaturen, Lüfterdrehzahl
 sowie das aktive Lüfterprofil und den Leistungsmodus; gestrichelte Linien markieren Wechsel.
 Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktionen
-(Updates, Hardware-Test, Sensoren, Konfiguration, Log, Dienst neu starten, Autostart) liegen
+(Einstellungen, Updates, Hardware-Test, Sensoren, Log, Dienst neu starten, Autostart) liegen
 unter **Extras**.
+
+**Extras ▸ Einstellungen …** ändert die Konfiguration ohne Texteditor:
+
+| Reiter | Inhalt |
+|---|---|
+| **Allgemein** | Profil bei „Automatisch“ am Netzteil bzw. im Akkubetrieb, Notfall-Temperatur für volle Drehzahl |
+| **Lüfterkurven** | Kurven für CPU und GPU je Profil – Punkte mit der Maus verschieben, „Standard“ setzt zurück |
+| **Regelung** | Hysterese, Verzögerung und Tempo beim Hoch-/Herunterregeln, Anlaufdrehzahl, Messintervall |
+| **Updates** | automatisch installieren oder nur anzeigen |
+
+Gespeichert werden nur geänderte Werte; die Datei wird vorher geprüft, Kommentare bleiben erhalten,
+und die Lüftersteuerung übernimmt die Änderung sofort. „Als Textdatei öffnen“ zeigt die
+`config.toml` für alle weiteren Einstellungen.
 Schließen (✕) blendet das Fenster nur aus.
 
 Oben rechts schaltet der Schalter **Steuerung an/aus** die Lüftersteuerung ein oder aus. Aus heißt:
@@ -130,7 +143,7 @@ Ende der Ausgabe schicken.
 
 | Datei in `C:\ProgramData\VictusFan` | Inhalt |
 |---|---|
-| `config.toml` | Konfiguration – Änderungen gelten nach dem Speichern sofort ([Beispiel](config.example.toml)) |
+| `config.toml` | Konfiguration – am einfachsten über Extras ▸ Einstellungen; Änderungen gelten sofort ([Beispiel](config.example.toml)) |
 | `victus-fan.log` | Log der Lüftersteuerung |
 | `update.log`, `update-install.log` | Log der Updates |
 
@@ -178,6 +191,7 @@ GitHub-Release mit automatischen Änderungsnotizen an. Ohne Versionssprung wird 
 | `service.py` | Dienstschleife, Steuerung, Selbstkontrolle |
 | `backends/windows.py` | HP-BIOS über WMI (`hpqBIntM`); Befehlscodes aus der Community-Dokumentation (z. B. OmenMon) |
 | `gui.py` | Tray-Icon und Fenster |
+| `settings_dialog.py` | Einstellungsfenster mit Kurveneditor |
 | `selftest.py`, `sensors.py` | Hardware-Test und Sensor-Test |
 | `updater.py` | Auto-Update über GitHub |
 | `state.py` | Austausch zwischen Dienst und Oberfläche (`status.json`, `override.json`) |
