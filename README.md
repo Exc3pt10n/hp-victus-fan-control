@@ -95,16 +95,22 @@ der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
 - **Ruhig statt hektisch:** Steigende Temperaturen werden schnell erkannt, kurze Lastspitzen
   aber geglättet. Heruntergeregelt wird erst, wenn es 4 °C kühler ist und das 20 s anhält –
   dann sanft mit 3 %/s.
-- **Sicherheit:** Ab 92 °C oder ohne Sensordaten sofort volle Drehzahl. Nach wiederholten
-  Fehlern übernimmt wieder das BIOS; dessen Überhitzungsschutz bleibt immer aktiv.
+- **Sicherheit:** Ab 92 °C oder ohne Sensordaten sofort volle Drehzahl. Fest eingebaut und nicht
+  abschaltbar: Die Notfall-Temperatur lässt sich höchstens auf 95 °C stellen, und ab 80 °C
+  laufen die Lüfter unabhängig von der Kurve mindestens an (88 °C ≥ 60 %). Ungültige Werte in der
+  Konfiguration werden abgelehnt. Nach wiederholten Fehlern übernimmt wieder das BIOS; dessen
+  Überhitzungsschutz bleibt immer aktiv.
+- **Grafikkarte schlafen lassen:** Schläft die NVIDIA-GPU (Optimus), wird ihre Temperatur nicht
+  abgefragt – `nvidia-smi` würde sie sonst alle paar Sekunden aufwecken und Strom kosten. Das
+  Fenster zeigt dann „Ruhezustand“.
 - **Standby:** Im Standby und bei ausgeschaltetem Bildschirm regelt die Firmware die Lüfter
   selbst (sie ignoriert dann Drehzahlbefehle); Warnungen und Anlaufhilfe ruhen so lange. Erst wenn
-  der Bildschirm wieder angeht, setzt die Steuerung Leistungsmodus und Drehzahl sofort neu – die
+  der Bildschirm wieder angeht, setzt die Steuerung BIOS-Modus und Drehzahl sofort neu – die
   kurzen Wartungs-Aufwachphasen des modernen Standbys zählen nicht als Rückkehr.
 - **Anlaufhilfe:** Ein stehender Lüfter läuft bei niedriger Drehzahl nicht von selbst an. Er
   bekommt dann kurz ≈ 3000 U/min, bis er dreht, und läuft danach mit der Zieldrehzahl.
 - **Selbstkontrolle:** Die gemessene Drehzahl wird laufend mit der Vorgabe verglichen. Weicht
-  sie ab, setzt die Steuerung Leistungsmodus und Drehzahl neu – jede Minute, bis es wieder
+  sie ab, setzt die Steuerung BIOS-Modus und Drehzahl neu – jede Minute, bis es wieder
   passt. Nach drei erfolglosen Versuchen erscheint zusätzlich ein Hinweis im Fenster.
 
 Gemessene Eigenschaften des Victus BV8D4EA (Ryzen 5 240, RTX 5050):
@@ -112,7 +118,7 @@ Gemessene Eigenschaften des Victus BV8D4EA (Ryzen 5 240, RTX 5050):
 | | |
 |---|---|
 | Lüfter | 1100 bis 5400 / 5200 U/min stufenlos, Stufe 0 = Stillstand |
-| Drehzahlvorgabe | wirkt erst, nachdem ein BIOS-Leistungsmodus gesetzt wurde – die Steuerung setzt ihn beim Start und etwa alle 50 s |
+| Drehzahlvorgabe | wirkt erst, nachdem ein BIOS-Modus gesetzt wurde – die Steuerung setzt ihn beim Start und etwa alle 50 s |
 | Anlauf | ein stehender Lüfter startet bei ≈ 1100 U/min nicht von selbst – daher die Anlaufhilfe |
 | CPU-Temperatur | der HP-BIOS-Sensor liefert nichts; die ACPI-Zone `THRM` folgt der CPU (Tctl) mit etwa 3 °C Abstand |
 | GPU-Temperatur | über `nvidia-smi` |
@@ -126,11 +132,27 @@ dort und im Tray-Menü gibt es **Nach Updates suchen**.
 Installiert werden nur **freigegebene Versionen**: die Tags `vX.Y.Z` bzw. GitHub-Releases von
 [`Exc3pt10n/hp-victus-fan-control`](https://github.com/Exc3pt10n/hp-victus-fan-control), die der
 Workflow nach einem Merge in `main` anlegt. Commits ohne neue Version werden nicht verteilt,
-und auf eine ältere Version wird nie zurückgestuft. Unter `[update]` in der Konfiguration lässt
-sich das abschalten, auf „nur anzeigen“ stellen oder – zum Testen – einem Branch folgen.
+und auf eine ältere Version wird nie zurückgestuft. Unter `[update]` in der Konfiguration bzw. im
+Einstellungsfenster lässt sich das abschalten oder auf „nur anzeigen“ stellen.
+
+Zum Testen kann der Updater stattdessen jedem Commit eines Branches folgen – das geht bewusst nur
+als Administrator, weil der Updater mit SYSTEM-Rechten läuft:
+
+```bat
+victus-fan update --branch NAME
+victus-fan update --branch release
+```
+
+(`release` = wieder nur freigegebene Versionen.)
+
+Ein Update wird erst vollständig heruntergeladen und danach lokal installiert und geprüft.
+Bricht es ab, bleibt die bisherige Version erhalten bzw. wird aus ihren aufgehobenen Paketen
+wiederhergestellt.
 
 > **Wichtig:** Updates laufen mit SYSTEM-Rechten und installieren, was als Version getaggt wird.
-> Halte den Schreibzugriff auf das Repository daher auf dich beschränkt.
+> Die Quelle steht deshalb fest im Programm (nicht in der für Benutzer bearbeitbaren
+> Konfiguration). Schütze dein GitHub-Konto mit Zwei-Faktor-Anmeldung und halte den
+> Schreibzugriff auf das Repository auf dich beschränkt.
 
 ## Tests bei Problemen
 
@@ -139,7 +161,7 @@ Ergebnis automatisch in die Konfiguration. Bei Problemen bitte die Zeile **„Ro
 Ende der Ausgabe schicken.
 
 - **Hardware-Test** (≈ 1,5 Minuten): misst, ob Max-Lüfter und feste Drehzahlen wirklich
-  umgesetzt werden, in welchem BIOS-Leistungsmodus, wie hoch die Maximaldrehzahl ist und
+  umgesetzt werden, in welchem BIOS-Modus, wie hoch die Maximaldrehzahl ist und
   wie weit herunter die Lüfter laufen. Setzt das BIOS feste Drehzahlen gar nicht um
   (etwa nach einem BIOS-Update), stellt er auf **Max an/aus** um: BIOS-Automatik bei
   normaler Last, volle Drehzahl bei hohem Bedarf.
@@ -194,11 +216,13 @@ GitHub-Release mit automatischen Änderungsnotizen an. Ohne Versionssprung wird 
 | `controller.py` | Regelkern (Kurven, Glättung, Hysterese, Rampen) – ohne Hardware testbar |
 | `service.py` | Dienstschleife, Steuerung, Selbstkontrolle |
 | `backends/windows.py` | HP-BIOS über WMI (`hpqBIntM`); Befehlscodes aus der Community-Dokumentation (z. B. OmenMon) |
-| `gui.py` | Tray-Icon und Fenster |
+| `backends/gpu_power.py` | Erkennt, ob die NVIDIA-GPU schläft – dann wird sie für die Temperatur nicht geweckt |
+| `gui.py` | Hauptfenster und Tray-Menü |
+| `ui/` | Bausteine der Oberfläche: Farbschema, Texte, Symbole, Widgets, Windows-Helfer |
 | `settings_dialog.py` | Einstellungsfenster mit Kurveneditor |
 | `log_window.py`, `logparse.py` | Protokollfenster bzw. Zerlegen der Logzeilen |
 | `selftest.py`, `sensors.py` | Hardware-Test und Sensor-Test |
-| `updater.py` | Auto-Update über GitHub |
+| `updater.py` | Auto-Update über GitHub (Quelle fest im Code, siehe unten) |
 | `state.py` | Austausch zwischen Dienst und Oberfläche (`status.json`, `override.json`) |
 
 Lizenz: MIT

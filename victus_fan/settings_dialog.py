@@ -12,8 +12,8 @@ import copy
 import tkinter as tk
 from tkinter import messagebox
 
-from . import gui as ui
-from .config import DEFAULTS, DEFAULT_PROFILES, load_config, save_settings
+from .ui import system, texts, theme, widgets
+from .config import DEFAULTS, DEFAULT_PROFILES, MAX_CRITICAL_TEMP, load_config, save_settings
 
 T_MIN, T_MAX = 30, 100
 
@@ -48,7 +48,7 @@ class CurveEditor(tk.Canvas):
     PAD_L, PAD_R, PAD_T, PAD_B = 40, 26, 14, 26
 
     def __init__(self, master, on_change):
-        C = ui.C
+        C = theme.C
         super().__init__(master, bg=C.CARD, height=250, width=520, highlightthickness=0)
         self.on_change = on_change
         self.curves: dict[str, list[list[float]]] = {"cpu": [], "gpu": []}
@@ -82,7 +82,7 @@ class CurveEditor(tk.Canvas):
 
     # ---- Zeichnen ----------------------------------------------------
     def redraw(self) -> None:
-        C = ui.C
+        C = theme.C
         self.delete("all")
         w, h = self.winfo_width(), self.winfo_height()
         if w < 100:
@@ -90,12 +90,12 @@ class CurveEditor(tk.Canvas):
         for p in (0, 25, 50, 75, 100):
             y = self._y(p)
             self.create_line(self.PAD_L, y, w - self.PAD_R, y, fill=C.BORDER)
-            self.create_text(self.PAD_L - 6, y, text=f"{p} %", anchor="e", fill=C.MUTED, font=(ui.FONT, 8))
+            self.create_text(self.PAD_L - 6, y, text=f"{p} %", anchor="e", fill=C.MUTED, font=(theme.FONT, 8))
         for t in range(T_MIN, T_MAX + 1, 10):
             x = self._x(t)
             self.create_line(x, self.PAD_T, x, h - self.PAD_B, fill=C.BORDER, dash=(1, 3))
-            self.create_text(x, h - self.PAD_B + 6, text=f"{t} °C", anchor="n", fill=C.MUTED, font=(ui.FONT, 8))
-        for key, color in (("gpu", ui.GPU_COLOR), ("cpu", ui.CPU_COLOR)):
+            self.create_text(x, h - self.PAD_B + 6, text=f"{t} °C", anchor="n", fill=C.MUTED, font=(theme.FONT, 8))
+        for key, color in (("gpu", theme.GPU_COLOR), ("cpu", theme.CPU_COLOR)):
             curve = self.curves.get(key) or []
             pts = curve[1:] if len(curve) > 1 else curve
             if not pts:
@@ -112,7 +112,7 @@ class CurveEditor(tk.Canvas):
                 self.create_oval(x - r, y - r, x + r, y + r, fill=color, outline=C.CARD, width=2)
                 if active:
                     self.create_text(x, y - 12, text=f"{t:.0f} °C · {p:.0f} %", anchor="s",
-                                     fill=C.TEXT, font=(ui.FONT, 8, "bold"))
+                                     fill=C.TEXT, font=(theme.FONT, 8, "bold"))
 
     # ---- Maus --------------------------------------------------------
     def _nearest(self, x: float, y: float) -> tuple[str, int] | None:
@@ -159,7 +159,7 @@ class CurveEditor(tk.Canvas):
 
 class SettingsDialog:
     def __init__(self, app):
-        C = ui.C
+        C = theme.C
         self.app = app
         self.path = app.config_path
         try:
@@ -167,7 +167,7 @@ class SettingsDialog:
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Einstellungen", f"Die Konfiguration ist fehlerhaft:\n{exc}\n\n"
                                                   "Bitte als Textdatei öffnen und korrigieren.")
-            ui.open_file(self.path)
+            system.open_file(self.path)
             raise
         raw = self.cfg.raw
         self.profiles = [n for n in raw["profiles"]]
@@ -176,23 +176,23 @@ class SettingsDialog:
         self.original_curves = copy.deepcopy(self.curves)
 
         self.win = tk.Toplevel(app.root)
-        ui.hide_until_placed(self.win)
+        theme.hide_until_placed(self.win)
         self.win.title("Einstellungen – Victus Lüftersteuerung")
         self.win.configure(bg=C.BG)
         self.win.transient(app.root)
         self.win.resizable(False, False)
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         if C.dark:
-            ui._dark_title_bar(self.win)
+            theme._dark_title_bar(self.win)
 
         outer = tk.Frame(self.win, bg=C.BG)
         outer.pack(fill="both", expand=True, padx=18, pady=14)
-        tk.Label(outer, text="Einstellungen", bg=C.BG, fg=C.TEXT, font=(ui.FONT, 14, "bold")).pack(anchor="w")
-        self.tabs = ui.Segmented(outer, self.show_page)
+        tk.Label(outer, text="Einstellungen", bg=C.BG, fg=C.TEXT, font=(theme.FONT, 14, "bold")).pack(anchor="w")
+        self.tabs = widgets.Segmented(outer, self.show_page)
         self.tabs.pack(anchor="w", pady=(8, 10))
         self.tabs.set_options([("general", "Allgemein"), ("curves", "Lüfterkurven"),
                                ("control", "Regelung"), ("updates", "Updates")])
-        self.body = ui.Card(outer)
+        self.body = widgets.Card(outer)
         self.body.pack(fill="both", expand=True)
 
         self.pages = {"general": self._page_general(), "curves": self._page_curves(),
@@ -200,8 +200,8 @@ class SettingsDialog:
 
         foot = tk.Frame(outer, bg=C.BG)
         foot.pack(fill="x", pady=(12, 0))
-        link = tk.Label(foot, text="Als Textdatei öffnen", bg=C.BG, fg=ui.ACCENT, cursor="hand2",
-                        font=(ui.FONT, 8, "underline"))
+        link = tk.Label(foot, text="Als Textdatei öffnen", bg=C.BG, fg=theme.ACCENT, cursor="hand2",
+                        font=(theme.FONT, 8, "underline"))
         link.pack(side="left")
         link.bind("<Button-1>", lambda _e: self.app._open(self.path))
         self._button(foot, "Speichern", self.save, primary=True).pack(side="right")
@@ -216,92 +216,92 @@ class SettingsDialog:
         self.win.geometry(f"{width}x{height}")
         self.show_page("general")
         self._center(width, height)
-        ui.reveal(self.win)
+        theme.reveal(self.win)
         self.win.grab_set()
         self.win.focus_force()
 
     # ---- Bausteine ---------------------------------------------------
     def _button(self, parent, text, command, primary=False):
-        C = ui.C
+        C = theme.C
         bg, fg = (C.SELECTED, C.SELECTED_TEXT) if primary else (C.TRACK, C.TEXT)
         return tk.Button(parent, text=text, command=command, bg=bg, fg=fg, activebackground=C.HOVER,
                          activeforeground=C.TEXT, relief="flat", bd=0, padx=16, pady=5,
-                         font=(ui.FONT, 9, "bold" if primary else "normal"), cursor="hand2")
+                         font=(theme.FONT, 9, "bold" if primary else "normal"), cursor="hand2")
 
     def _section(self, parent, title: str, hint: str = ""):
-        C = ui.C
+        C = theme.C
         box = tk.Frame(parent, bg=C.CARD)
         box.pack(fill="x", padx=14, pady=(12, 0))
-        tk.Label(box, text=title, bg=C.CARD, fg=C.TEXT, font=(ui.FONT, 9, "bold")).pack(anchor="w")
+        tk.Label(box, text=title, bg=C.CARD, fg=C.TEXT, font=(theme.FONT, 9, "bold")).pack(anchor="w")
         if hint:
-            tk.Label(box, text=hint, bg=C.CARD, fg=C.MUTED, font=(ui.FONT, 8), justify="left",
+            tk.Label(box, text=hint, bg=C.CARD, fg=C.MUTED, font=(theme.FONT, 8), justify="left",
                      wraplength=520).pack(anchor="w")
         return box
 
     def _spin(self, parent, value, lo, hi, step):
-        C = ui.C
+        C = theme.C
         var = tk.StringVar(value=str(_num(value)))
         spin = tk.Spinbox(parent, from_=lo, to=hi, increment=step, textvariable=var, width=6,
-                          font=(ui.FONT, 9), bg=C.CARD, fg=C.TEXT, buttonbackground=C.TRACK,
+                          font=(theme.FONT, 9), bg=C.CARD, fg=C.TEXT, buttonbackground=C.TRACK,
                           insertbackground=C.TEXT, relief="flat", highlightthickness=1,
                           highlightbackground=C.BORDER, highlightcolor=C.SELECTED, justify="right")
         var.set(str(_num(value)))
         return spin, var
 
     def _check(self, parent, text, value):
-        C = ui.C
+        C = theme.C
         var = tk.BooleanVar(value=bool(value))
         box = tk.Checkbutton(parent, text=text, variable=var, bg=C.CARD, fg=C.TEXT, selectcolor=C.CARD,
-                             activebackground=C.CARD, activeforeground=C.TEXT, font=(ui.FONT, 9),
+                             activebackground=C.CARD, activeforeground=C.TEXT, font=(theme.FONT, 9),
                              anchor="w", highlightthickness=0, bd=0)
         return box, var
 
     # ---- Seiten ------------------------------------------------------
     def _page(self):
-        return tk.Frame(self.body, bg=ui.C.CARD)
+        return tk.Frame(self.body, bg=theme.C.CARD)
 
     def _page_general(self):
         page = self._page()
         g = self.cfg.general
-        options = [(n, ui.profile_label(n)) for n in self.profiles]
+        options = [(n, texts.profile_label(n)) for n in self.profiles]
         box = self._section(page, "Lüfterprofil bei „Automatisch“ am Netzteil")
-        self.ac_seg = ui.Segmented(box, lambda v: self.ac_seg.set(v))
+        self.ac_seg = widgets.Segmented(box, lambda v: self.ac_seg.set(v))
         self.ac_seg.set_options(options)
         self.ac_seg.set(g["profile"])
         self.ac_seg.pack(anchor="w", pady=(5, 0))
         box = self._section(page, "… im Akkubetrieb")
-        self.bat_seg = ui.Segmented(box, lambda v: self.bat_seg.set(v))
+        self.bat_seg = widgets.Segmented(box, lambda v: self.bat_seg.set(v))
         self.bat_seg.set_options(options)
         self.bat_seg.set(g["battery_profile"])
         self.bat_seg.pack(anchor="w", pady=(5, 0))
         box = self._section(page, "Notfall: volle Drehzahl ab",
                             "Erreicht CPU oder GPU diese Temperatur, laufen die Lüfter sofort mit voller "
                             "Drehzahl – unabhängig vom Profil.")
-        row = tk.Frame(box, bg=ui.C.CARD)
+        row = tk.Frame(box, bg=theme.C.CARD)
         row.pack(anchor="w", pady=(5, 14))
-        spin, self.critical_var = self._spin(row, g["critical_temp"], 70, 100, 1)
+        spin, self.critical_var = self._spin(row, g["critical_temp"], 70, MAX_CRITICAL_TEMP, 1)
         spin.pack(side="left")
-        tk.Label(row, text="°C", bg=ui.C.CARD, fg=ui.C.MUTED, font=(ui.FONT, 9)).pack(side="left", padx=(6, 0))
+        tk.Label(row, text="°C", bg=theme.C.CARD, fg=theme.C.MUTED, font=(theme.FONT, 9)).pack(side="left", padx=(6, 0))
         return page
 
     def _page_curves(self):
-        C = ui.C
+        C = theme.C
         page = self._page()
         box = self._section(page, "Profil", "Punkte mit der Maus verschieben. Links vom ersten Punkt gilt "
                                             "dessen Wert, rechts vom letzten ebenso.")
         top = tk.Frame(box, bg=C.CARD)
         top.pack(fill="x", pady=(6, 0))
-        self.curve_seg = ui.Segmented(top, self.select_curve)
-        self.curve_seg.set_options([(n, ui.profile_label(n)) for n in self.profiles])
+        self.curve_seg = widgets.Segmented(top, self.select_curve)
+        self.curve_seg.set_options([(n, texts.profile_label(n)) for n in self.profiles])
         self.curve_seg.pack(side="left")
         self._button(top, "Standard", self.reset_curve).pack(side="right")
         legend = tk.Frame(box, bg=C.CARD)
         legend.pack(fill="x", pady=(8, 0))
-        for text, color in (("CPU-Temperatur", ui.CPU_COLOR), ("GPU-Temperatur", ui.GPU_COLOR)):
-            tk.Label(legend, text="●", bg=C.CARD, fg=color, font=(ui.FONT, 8)).pack(side="left")
-            tk.Label(legend, text=text, bg=C.CARD, fg=C.MUTED, font=(ui.FONT, 8)).pack(side="left", padx=(2, 12))
+        for text, color in (("CPU-Temperatur", theme.CPU_COLOR), ("GPU-Temperatur", theme.GPU_COLOR)):
+            tk.Label(legend, text="●", bg=C.CARD, fg=color, font=(theme.FONT, 8)).pack(side="left")
+            tk.Label(legend, text=text, bg=C.CARD, fg=C.MUTED, font=(theme.FONT, 8)).pack(side="left", padx=(2, 12))
         tk.Label(legend, text="senkrecht: Lüfterleistung", bg=C.CARD, fg=C.MUTED,
-                 font=(ui.FONT, 8)).pack(side="right")
+                 font=(theme.FONT, 8)).pack(side="right")
         self.editor = CurveEditor(page, self._curve_changed)
         self.editor.pack(fill="x", padx=8, pady=(4, 10))
         start = "balanced" if "balanced" in self.profiles else self.profiles[0]
@@ -311,22 +311,22 @@ class SettingsDialog:
     def _page_control(self):
         page = self._page()
         self.control_vars = {}
-        grid = tk.Frame(page, bg=ui.C.CARD)
+        grid = tk.Frame(page, bg=theme.C.CARD)
         grid.pack(fill="x", padx=14, pady=(12, 6))
         for row, (key, section, label, unit, lo, hi, step, hint) in enumerate(CONTROL_FIELDS):
-            tk.Label(grid, text=label, bg=ui.C.CARD, fg=ui.C.TEXT, font=(ui.FONT, 9, "bold")).grid(
+            tk.Label(grid, text=label, bg=theme.C.CARD, fg=theme.C.TEXT, font=(theme.FONT, 9, "bold")).grid(
                 row=row * 2, column=0, sticky="w", pady=(6, 0))
-            cell = tk.Frame(grid, bg=ui.C.CARD)
+            cell = tk.Frame(grid, bg=theme.C.CARD)
             cell.grid(row=row * 2, column=1, sticky="e", pady=(6, 0))
             spin, var = self._spin(cell, self.cfg.raw[section][key], lo, hi, step)
             spin.pack(side="left")
-            tk.Label(cell, text=unit, width=4, anchor="w", bg=ui.C.CARD, fg=ui.C.MUTED,
-                     font=(ui.FONT, 9)).pack(side="left", padx=(6, 0))
-            tk.Label(grid, text=hint, bg=ui.C.CARD, fg=ui.C.MUTED, font=(ui.FONT, 8)).grid(
+            tk.Label(cell, text=unit, width=4, anchor="w", bg=theme.C.CARD, fg=theme.C.MUTED,
+                     font=(theme.FONT, 9)).pack(side="left", padx=(6, 0))
+            tk.Label(grid, text=hint, bg=theme.C.CARD, fg=theme.C.MUTED, font=(theme.FONT, 8)).grid(
                 row=row * 2 + 1, column=0, columnspan=2, sticky="w")
             self.control_vars[key] = (section, var, lo, hi, label)
         grid.columnconfigure(0, weight=1)
-        bottom = tk.Frame(page, bg=ui.C.CARD)
+        bottom = tk.Frame(page, bg=theme.C.CARD)
         bottom.pack(fill="x", padx=14, pady=(4, 12))
         self._button(bottom, "Standardwerte", self.reset_control).pack(side="right")
         return page
@@ -344,7 +344,7 @@ class SettingsDialog:
         self.upd_box.configure(command=self._sync_update_boxes)
         self._sync_update_boxes()
         tk.Label(box, text="Installiert werden nur freigegebene Versionen (Tags). Deine Einstellungen "
-                           "bleiben bei Updates erhalten.", bg=ui.C.CARD, fg=ui.C.MUTED, font=(ui.FONT, 8),
+                           "bleiben bei Updates erhalten.", bg=theme.C.CARD, fg=theme.C.MUTED, font=(theme.FONT, 8),
                  wraplength=520, justify="left").pack(anchor="w", pady=(8, 14))
         return page
 
@@ -393,7 +393,7 @@ class SettingsDialog:
 
         put("general", "profile", self.ac_seg.value)
         put("general", "battery_profile", self.bat_seg.value)
-        put("general", "critical_temp", self._read(self.critical_var, 70, 100, "Notfall-Temperatur"))
+        put("general", "critical_temp", self._read(self.critical_var, 70, MAX_CRITICAL_TEMP, "Notfall-Temperatur"))
         for key, (section, var, lo, hi, label) in self.control_vars.items():
             put(section, key, self._read(var, lo, hi, label))
         put("update", "enabled", bool(self.upd_enabled.get()))

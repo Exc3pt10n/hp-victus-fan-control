@@ -34,16 +34,20 @@ def _r(value):
 
 
 def cmd_run(args) -> int:
-    from .config import reset_auto_chosen_fan_mode
+    from .config import Config
     from .service import FanService
 
-    migrated = reset_auto_chosen_fan_mode(args.config)
-    cfg = load_config(args.config)
+    try:
+        cfg, error = load_config(args.config), None
+    except Exception as exc:  # noqa: BLE001 - Dienst muss trotzdem laufen
+        # Mit Standardwerten weiterregeln statt gar nicht: Sobald die Datei
+        # korrigiert ist, übernimmt der Dienst sie ohne Neustart.
+        cfg, error = Config(path=Path(args.config) if args.config else None), exc
     log_file = Path(args.log_file) if args.log_file else paths.LOG_FILE
     _setup_logging("DEBUG" if args.verbose else cfg.general["log_level"], log_file)
+    if error is not None:
+        logging.getLogger(__name__).error("Konfiguration fehlerhaft (%s) - nutze Standardwerte", error)
     backend = create_backend(args.backend or cfg.general["backend"], cfg)
-    if migrated:
-        logging.getLogger(__name__).info("Automatisch gewählten BIOS-Leistungsmodus auf 'default' zurückgesetzt")
     service = FanService(cfg, backend, status_file=paths.STATUS_FILE,
                          override_file=paths.OVERRIDE_FILE, dry_run=args.dry_run)
     service.install_signal_handlers()
@@ -195,6 +199,15 @@ def cmd_update(args) -> int:
     from . import updater
 
     updater.setup_logging()
+    if args.branch is not None:
+        name = "" if args.branch in ("", "release") else args.branch
+        try:
+            updater.set_test_branch(name)
+        except OSError as exc:
+            print(f"Nicht gespeichert ({exc}) - dafür sind Administratorrechte nötig.")
+            return 1
+        print(f"Updates folgen jetzt jedem Commit von '{name}' (nur zum Testen)." if name
+              else "Updates: nur freigegebene Versionen.")
     cfg = load_config(args.config)
     if args.auto and not cfg.update.get("enabled", True):
         logging.getLogger(__name__).info("Auto-Update ist deaktiviert ([update] enabled = false)")
@@ -323,6 +336,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--check", action="store_true", help="nur prüfen, nicht installieren")
     p.add_argument("--force", action="store_true", help="auch ohne neue Version neu installieren")
     p.add_argument("--auto", action="store_true", help="für die geplante Aufgabe: beachtet [update] enabled")
+    p.add_argument("--branch", metavar="NAME",
+                   help="nur zum Testen: jedem Commit dieses Branches folgen; 'release' = wieder nur Versionen")
     p.set_defaults(func=cmd_update)
 
     p = sub.add_parser("sensors", help="Temperaturquellen auflisten und unter CPU-Last vergleichen")

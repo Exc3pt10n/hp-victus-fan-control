@@ -29,13 +29,11 @@ min_level = 0                 # kleinste wirksame Stufe > 0
 max_level_cpu = 54            # 54 = 5400 U/min
 max_level_gpu = 52
 keepalive = 60.0              # Drehzahl erneut senden (das BIOS übernimmt nach ~120 s ohne Befehl)
-mode_keepalive = 50.0         # Leistungsmodus erneut setzen (sonst ignoriert das BIOS die Drehzahl)
+mode_keepalive = 50.0         # BIOS-Modus erneut setzen (sonst ignoriert das BIOS die Drehzahl)
 
 [update]
 enabled = true                # beim Start und alle 6 Stunden nach Updates suchen
 check_only = false            # true = Update nur anzeigen, nicht installieren
-repo = "Exc3pt10n/hp-victus-fan-control"
-branch = ""                   # leer = nur freigegebene Versionen (Tags); Branch-Name = jedem Commit folgen
 
 [toggle]                      # nur für mode = "toggle"
 engage_percent = 80.0         # ab diesem Bedarf: Max-Lüfter an

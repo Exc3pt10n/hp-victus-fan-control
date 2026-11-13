@@ -8,7 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import Profile
+from .config import MAX_CRITICAL_TEMP, Profile
+
+# Feste Untergrenze, unabhängig von Profil und Konfiguration: Auch eine (versehentlich)
+# flach eingestellte Kurve kann die Lüfter bei hohen Temperaturen nicht still halten.
+# Die mitgelieferten Profile liegen überall darüber.
+SAFETY_FLOOR = [(0.0, 0.0), (80.0, 0.0), (88.0, 60.0), (MAX_CRITICAL_TEMP, 100.0)]
 
 
 def interpolate(curve: list[tuple[float, float]], temp: float) -> float:
@@ -56,7 +61,7 @@ class FanController:
         self.ramp_up_rate = float(control["ramp_up_rate"])
         self.ramp_down_rate = float(control["ramp_down_rate"])
         self.min_running = float(control["min_running_percent"])
-        self.critical_temp = float(critical_temp)
+        self.critical_temp = min(float(critical_temp), MAX_CRITICAL_TEMP)
 
     def _smooth(self, prev: float | None, value: float | None) -> float | None:
         if value is None:
@@ -72,8 +77,10 @@ class FanController:
         demands = [0.0]
         if cpu is not None:
             demands.append(interpolate(profile.cpu_curve, cpu + offset))
+            demands.append(interpolate(SAFETY_FLOOR, cpu + offset))
         if gpu is not None:
             demands.append(interpolate(profile.gpu_curve, gpu + offset))
+            demands.append(interpolate(SAFETY_FLOOR, gpu + offset))
         return max(demands)
 
     def update(self, reading: Reading, profile: Profile, now: float) -> Decision:

@@ -2,7 +2,7 @@
 
 Im (modernen) Standby übernimmt beim Victus BV8D4EA die Firmware die Lüfter und
 ignoriert Drehzahlbefehle; nach dem Aufwachen muss die Steuerung den
-Leistungsmodus neu setzen. Dieses Modul meldet die nötigen Ereignisse.
+BIOS-Modus neu setzen. Dieses Modul meldet die nötigen Ereignisse.
 
 Umsetzung ohne Zusatzpakete über ctypes: ein unsichtbares Fenster in einem
 eigenen Thread empfängt WM_POWERBROADCAST (Standby/Aufwachen) und - per

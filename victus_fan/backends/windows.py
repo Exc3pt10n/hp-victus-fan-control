@@ -9,14 +9,14 @@ Command    0x20008 (Standard), Signatur "SECU"
 0x2D       GetFanLevel    -> [CPU, GPU] in 100 U/min
 0x2E       SetFanLevel    <- [CPU, GPU] in 100 U/min
 0x26/0x27  Get/SetMaxFan  <- [1] an, [0] aus
-0x1A       SetFanMode     <- [0xFF, Modus]  (Leistungsmodus/Thermal Policy)
+0x1A       SetFanMode     <- [0xFF, Modus]  (BIOS-Modus/Thermal Policy)
 =========  ====================================================
 
 Wichtig: Das BIOS übernimmt nach etwa 120 s ohne neuen Befehl wieder die
 Automatik. Beim Victus BV8D4EA setzt es feste Drehzahlen außerdem nur um,
-solange ein kürzlich gesetzter Leistungsmodus sie "freigibt" - nach einer
+solange ein kürzlich gesetzter BIOS-Modus sie "freigibt" - nach einer
 Weile fällt es in seine eigene Automatik zurück. Der Dienst sendet deshalb
-Drehzahl und Leistungsmodus regelmäßig erneut.
+Drehzahl und BIOS-Modus regelmäßig erneut.
 
 Benötigt Administratorrechte (der Installer richtet den Dienst als SYSTEM ein).
 """
@@ -42,7 +42,7 @@ GET_FAN_LEVEL = 0x2D
 SET_FAN_LEVEL = 0x2E
 SET_FAN_MODE = 0x1A
 
-# Leistungsmodi: neuere Geräte nutzen 0x30/0x31/0x50, ältere die Legacy-Codes.
+# BIOS-Modi: neuere Geräte nutzen 0x30/0x31/0x50, ältere die Legacy-Codes.
 FAN_MODES = {
     "default": (0x30, 0x00),
     "performance": (0x31, 0x01),
@@ -153,7 +153,7 @@ class WindowsBackend(FanBackend):
         self.max_gpu = int(settings["max_level_gpu"])
         self.min_level = int(settings.get("min_level", 0))
         self.keepalive = float(settings["keepalive"])
-        # Leistungsmodus spätestens nach dieser Zeit erneut setzen (Freigabe auffrischen).
+        # BIOS-Modus spätestens nach dieser Zeit erneut setzen (Freigabe auffrischen).
         self.mode_keepalive = float(settings.get("mode_keepalive", 50.0))
         sensor_id = settings.get("cpu_sensor", "auto") or "auto"
         if sensor_id != self._cpu_sensor_id:
@@ -175,7 +175,7 @@ class WindowsBackend(FanBackend):
                 try:
                     self.set_fan_mode(fan_mode)
                 except Exception as exc:  # noqa: BLE001
-                    log.error("Leistungsmodus '%s' konnte nicht gesetzt werden: %s", fan_mode, exc)
+                    log.error("BIOS-Modus '%s' konnte nicht gesetzt werden: %s", fan_mode, exc)
             elif self._fan_mode:
                 self.set_fan_mode("default")
             self._fan_mode = fan_mode
@@ -287,11 +287,11 @@ class WindowsBackend(FanBackend):
             self.bios.call(SET_FAN_LEVEL, self._levels, out_size=0)
 
     def seconds_since_mode(self) -> float:
-        """Sekunden seit dem letzten Setzen des Leistungsmodus (inf = nie)."""
+        """Sekunden seit dem letzten Setzen des BIOS-Modus (inf = nie)."""
         return float("inf") if self._mode_set_at is None else time.monotonic() - self._mode_set_at
 
     def rearm(self, quiet: bool = False) -> None:
-        """Aktuellen Leistungsmodus erneut setzen - gibt die Drehzahlvorgabe wieder frei.
+        """Aktuellen BIOS-Modus erneut setzen - gibt die Drehzahlvorgabe wieder frei.
 
         Ohne ``quiet`` (Reaktion auf eine Abweichung) zusätzlich "Max-Lüfter aus"
         senden: ein Versuch, das BIOS zuverlässiger aus seiner Automatik zu holen.
@@ -306,7 +306,7 @@ class WindowsBackend(FanBackend):
         try:
             self.set_fan_mode(self._fan_mode, quiet=quiet)
         except Exception as exc:  # noqa: BLE001
-            log.error("Leistungsmodus '%s' konnte nicht erneut gesetzt werden: %s", self._fan_mode, exc)
+            log.error("BIOS-Modus '%s' konnte nicht erneut gesetzt werden: %s", self._fan_mode, exc)
 
     def diagnostic_context(self) -> str:
         """Kurzinfo fürs Log, wenn die Lüfter abweichen: Stromversorgung und
@@ -326,29 +326,29 @@ class WindowsBackend(FanBackend):
         self._max_active = enabled
 
     def set_fan_mode(self, name: str, quiet: bool = False) -> None:
-        """BIOS-Leistungsmodus setzen; probiert neue und Legacy-Codes."""
+        """BIOS-Modus setzen; probiert neue und Legacy-Codes."""
         if name not in FAN_MODES:
-            raise BackendError(f"Unbekannter Leistungsmodus '{name}'")
+            raise BackendError(f"Unbekannter BIOS-Modus '{name}'")
         errors = []
         for code in FAN_MODES[name]:
             try:
                 self.bios.call(SET_FAN_MODE, [0xFF, code], out_size=0)
                 self._mode_set_at = time.monotonic()
-                (log.debug if quiet else log.info)("Leistungsmodus -> %s (0x%02X)", name, code)
+                (log.debug if quiet else log.info)("BIOS-Modus -> %s (0x%02X)", name, code)
                 return
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"0x{code:02X}: {exc}")
-        raise BackendError(f"Leistungsmodus '{name}' abgelehnt ({'; '.join(errors)})")
+        raise BackendError(f"BIOS-Modus '{name}' abgelehnt ({'; '.join(errors)})")
 
     def shutdown(self) -> None:
         """Beim Beenden/Pausieren: Max aus und einen selbst gesetzten
-        Leistungsmodus zurücksetzen. ``reconfigure`` setzt ihn wieder."""
+        BIOS-Modus zurücksetzen. ``reconfigure`` setzt ihn wieder."""
         self.restore_auto()
         if self._fan_mode and self._fan_mode != "default":
             try:
                 self.set_fan_mode("default")
             except Exception as exc:  # noqa: BLE001
-                log.error("Leistungsmodus konnte nicht zurückgesetzt werden: %s", exc)
+                log.error("BIOS-Modus konnte nicht zurückgesetzt werden: %s", exc)
         self._fan_mode = ""
 
     def restore_auto(self) -> None:

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 import sys
 import time
 from abc import ABC, abstractmethod
+
+
+log = logging.getLogger(__name__)
 
 
 class BackendError(RuntimeError):
@@ -27,6 +31,10 @@ class FanBackend(ABC):
 
     def read_gpu_temp(self) -> float | None:
         return _gpu.read()
+
+    def gpu_asleep(self) -> bool:
+        """True, wenn die GPU schläft und deshalb nicht abgefragt wird."""
+        return _gpu.asleep
 
     @abstractmethod
     def on_battery(self) -> bool: ...
@@ -64,13 +72,23 @@ class FanBackend(ABC):
 
 
 class _NvidiaSmi:
-    """Liest die GPU-Temperatur über nvidia-smi (mit Zwischenspeicher)."""
+    """Liest die GPU-Temperatur über nvidia-smi (mit Zwischenspeicher).
 
-    def __init__(self, max_age: float = 4.0):
+    nvidia-smi weckt eine schlafende Optimus-GPU auf. Deshalb wird vorher
+    (ohne Aufwecken) geprüft, ob sie wach ist; schläft sie, gibt es keinen
+    Messwert - sie erzeugt dann auch keine Wärme.
+    """
+
+    def __init__(self, max_age: float = 4.0, power=None):
         self.max_age = max_age
         self._cache: tuple[float, float | None] | None = None
         self._exe = shutil.which("nvidia-smi")
         self._disabled = self._exe is None
+        if power is None:
+            from .gpu_power import GpuPower
+            power = GpuPower()
+        self._power = power
+        self.asleep = False
 
     def read(self) -> float | None:
         if self._disabled:
@@ -78,6 +96,13 @@ class _NvidiaSmi:
         now = time.monotonic()
         if self._cache and now - self._cache[0] < self.max_age:
             return self._cache[1]
+        asleep = self._power.awake() is False
+        if asleep != self.asleep:
+            log.info("NVIDIA-GPU %s", "schläft - Temperatur wird nicht abgefragt" if asleep else "ist wach")
+            self.asleep = asleep
+        if asleep:
+            self._cache = (now, None)
+            return None
         value = None
         try:
             flags = 0x08000000 if sys.platform == "win32" else 0  # CREATE_NO_WINDOW

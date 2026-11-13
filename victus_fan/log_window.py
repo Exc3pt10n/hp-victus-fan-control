@@ -11,7 +11,7 @@ import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
 
-from . import gui as ui
+from .ui import theme, widgets
 from . import paths
 from .logparse import Entry, filter_entries, parse_log, read_tail
 
@@ -22,7 +22,7 @@ WIDTH, HEIGHT = 1100, 760
 
 class LogWindow:
     def __init__(self, app):
-        C = ui.C
+        C = theme.C
         self.app = app
         self.sources = {"service": ("Lüftersteuerung", paths.LOG_FILE),
                         "update": ("Updates", paths.UPDATE_LOG)}
@@ -31,37 +31,37 @@ class LogWindow:
         self.entries: list[Entry] = []
 
         self.win = tk.Toplevel(app.root)
-        ui.hide_until_placed(self.win)
+        theme.hide_until_placed(self.win)
         self.win.title("Protokoll – Victus Lüftersteuerung")
         self.win.configure(bg=C.BG)
         self.win.minsize(640, 420)
         self.win.protocol("WM_DELETE_WINDOW", self.close)
         if C.dark:
-            ui._dark_title_bar(self.win)
+            theme._dark_title_bar(self.win)
 
         outer = tk.Frame(self.win, bg=C.BG)
         outer.pack(fill="both", expand=True, padx=18, pady=14)
-        tk.Label(outer, text="Protokoll", bg=C.BG, fg=C.TEXT, font=(ui.FONT, 14, "bold")).pack(anchor="w")
+        tk.Label(outer, text="Protokoll", bg=C.BG, fg=C.TEXT, font=(theme.FONT, 14, "bold")).pack(anchor="w")
 
         bar = tk.Frame(outer, bg=C.BG)
         bar.pack(fill="x", pady=(8, 8))
-        self.source_seg = ui.Segmented(bar, self.set_source)
+        self.source_seg = widgets.Segmented(bar, self.set_source)
         self.source_seg.set_options([(k, v[0]) for k, v in self.sources.items()])
         self.source_seg.set(self.source)
         self.source_seg.pack(side="left")
-        self.level_seg = ui.Segmented(bar, self.set_level)
+        self.level_seg = widgets.Segmented(bar, self.set_level)
         self.level_seg.set_options([("all", "Alle"), ("important", "Warnungen & Fehler")])
         self.level_seg.set("all")
         self.level_seg.pack(side="left", padx=(10, 0))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.render())
-        search = tk.Entry(bar, textvariable=self.search_var, width=18, font=(ui.FONT, 9), bg=C.CARD, fg=C.TEXT,
+        search = tk.Entry(bar, textvariable=self.search_var, width=18, font=(theme.FONT, 9), bg=C.CARD, fg=C.TEXT,
                           insertbackground=C.TEXT, relief="flat", highlightthickness=1,
                           highlightbackground=C.BORDER, highlightcolor=C.SELECTED)
         search.pack(side="right", ipady=3)
-        tk.Label(bar, text="Suchen", bg=C.BG, fg=C.MUTED, font=(ui.FONT, 9)).pack(side="right", padx=(0, 6))
+        tk.Label(bar, text="Suchen", bg=C.BG, fg=C.MUTED, font=(theme.FONT, 9)).pack(side="right", padx=(0, 6))
 
-        card = ui.Card(outer)
+        card = widgets.Card(outer)
         card.pack(fill="both", expand=True)
         self.text = tk.Text(card, wrap="word", font=("Consolas", 9), bg=C.CARD, fg=C.TEXT, relief="flat",
                             padx=10, pady=8, highlightthickness=0, insertbackground=C.TEXT,
@@ -71,11 +71,11 @@ class LogWindow:
         scroll.pack(side="right", fill="y")
         self.text.pack(side="left", fill="both", expand=True)
         self.text.tag_configure("time", foreground=C.MUTED)
-        self.text.tag_configure("Warnung", foreground=ui.WARN)
-        self.text.tag_configure("Fehler", foreground=ui.HOT)
+        self.text.tag_configure("Warnung", foreground=theme.WARN)
+        self.text.tag_configure("Fehler", foreground=theme.HOT)
         self.text.tag_configure("Debug", foreground=C.MUTED)
         self.text.tag_configure("level", font=("Consolas", 9, "bold"))
-        self.text.tag_configure("match", background=ui.WARN, foreground="#ffffff")
+        self.text.tag_configure("match", background=theme.WARN, foreground="#ffffff")
         # Hängender Einzug: umbrochene Zeilen beginnen unter der Meldung, nicht unter der Uhrzeit
         indent = tkfont.Font(family="Consolas", size=9).measure("12.11. 00:00:00  Warnung  ")
         self.text.tag_configure("entry", lmargin1=0, lmargin2=indent)
@@ -87,21 +87,21 @@ class LogWindow:
         self._button(foot, "Schließen", self.close).pack(side="right")
         self._button(foot, "Als Textdatei öffnen", self.open_file).pack(side="right", padx=(0, 8))
         self._button(foot, "Kopieren", self.copy).pack(side="right", padx=(0, 8))
-        self.count_label = tk.Label(foot, text="", bg=C.BG, fg=C.MUTED, font=(ui.FONT, 8), anchor="w")
+        self.count_label = tk.Label(foot, text="", bg=C.BG, fg=C.MUTED, font=(theme.FONT, 8), anchor="w")
         self.count_label.pack(side="left", fill="x", expand=True)
 
         self.refresh(force=True)
         self._center()
-        ui.reveal(self.win)
+        theme.reveal(self.win)
         self.text.see("end")
         self._tick()
 
     # ---- Bausteine ---------------------------------------------------
     def _button(self, parent, text, command):
-        C = ui.C
+        C = theme.C
         return tk.Button(parent, text=text, command=command, bg=C.TRACK, fg=C.TEXT, activebackground=C.HOVER,
                          activeforeground=C.TEXT, relief="flat", bd=0, padx=14, pady=5,
-                         font=(ui.FONT, 9), cursor="hand2")
+                         font=(theme.FONT, 9), cursor="hand2")
 
     def _center(self) -> None:
         """Groß und mittig auf dem Bildschirm, aber nie größer als dieser."""
@@ -131,7 +131,7 @@ class LogWindow:
         self.render()
 
     def render(self) -> None:
-        C = ui.C
+        C = theme.C
         at_end = self.text.yview()[1] >= 0.999
         shown = filter_entries(self.entries, self.level_seg.value == "important", self.search_var.get())
         self.text.configure(state="normal")
@@ -183,7 +183,7 @@ class LogWindow:
         shown = filter_entries(self.entries, self.level_seg.value == "important", self.search_var.get())
         self.win.clipboard_clear()
         self.win.clipboard_append("\n".join(e.text() for e in shown))
-        self.count_label.configure(text=f"{len(shown)} Einträge in die Zwischenablage kopiert", fg=ui.OK)
+        self.count_label.configure(text=f"{len(shown)} Einträge in die Zwischenablage kopiert", fg=theme.OK)
 
     def open_file(self) -> None:
         if self.path.exists():

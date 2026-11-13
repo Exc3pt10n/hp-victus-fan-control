@@ -16,7 +16,7 @@ else:  # nur für Entwicklung/Tests (z. B. --backend simulate)
 CONFIG_FILE = DATA_DIR / "config.toml"
 # Vom Dienst geschrieben: aktueller Zustand für Oberfläche und "victus-fan status".
 STATUS_FILE = DATA_DIR / "status.json"
-# Von Oberfläche/CLI geschrieben: Lüfter (Profil/Maximum), Steuerung an/aus, BIOS-Leistungsmodus.
+# Von Oberfläche/CLI geschrieben: Lüfter (Profil/Maximum), Steuerung an/aus.
 OVERRIDE_FILE = DATA_DIR / "override.json"
 LOG_FILE = DATA_DIR / "victus-fan.log"
 
@@ -28,3 +28,8 @@ UPDATE_STATUS = DATA_DIR / "update_status.json"
 UPDATE_LOG = DATA_DIR / "update.log"
 UPDATE_INSTALL_LOG = DATA_DIR / "update-install.log"
 UPDATE_TASK = "VictusFanUpdate"
+# Nur zum Testen: Branch, dessen Commits der Updater statt der Releases folgt.
+# Liegt bewusst im Programmordner (nur Administratoren dürfen schreiben) und
+# nicht in der für Benutzer beschreibbaren config.toml: Der Updater läuft als
+# SYSTEM und führt den Installer des geladenen Codes aus.
+UPDATE_BRANCH_FILE = INSTALL_DIR / "update-branch.txt"

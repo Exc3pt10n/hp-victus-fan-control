@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "victus-fan"
-version = "2.8.0"
+dynamic = ["version"]   # einzige Quelle: victus_fan/__init__.py
 description = "Intelligente Lüftersteuerung für HP-Victus-Notebooks (Windows 11)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,5 +22,8 @@ gui = ["pystray>=0.19", "Pillow>=10.1"]
 [project.scripts]
 victus-fan = "victus_fan.cli:main"
 
+[tool.setuptools.dynamic]
+version = {attr = "victus_fan.__version__"}
+
 [tool.setuptools]
-packages = ["victus_fan", "victus_fan.backends"]
+packages = ["victus_fan", "victus_fan.backends", "victus_fan.ui"]

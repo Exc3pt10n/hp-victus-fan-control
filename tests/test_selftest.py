@@ -74,7 +74,7 @@ class SelftestTest(unittest.TestCase):
 
     def test_backend_without_modes(self):
         class NoModes:
-            """Backend ohne Leistungsmodi und ohne set_levels (wie die Simulation)."""
+            """Backend ohne BIOS-Modi und ohne set_levels (wie die Simulation)."""
             supports_level = True
 
             def __init__(self):
