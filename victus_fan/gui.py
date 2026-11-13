@@ -624,6 +624,7 @@ class App:
         self.calls: queue.Queue = queue.Queue()
         self.tray = None
         self.settings = None             # offenes Einstellungsfenster
+        self.log_window = None           # offenes Protokollfenster
         self._install_mtime = self._installed_mtime()
         self._relaunch_pending = False
         self._warning_shown = False
@@ -749,7 +750,7 @@ class App:
         menu.add_command(label="Hardware-Test …", command=self.selftest)
         menu.add_command(label="Temperatursensoren testen …", command=self.sensor_test)
         menu.add_separator()
-        menu.add_command(label="Log öffnen", command=self.open_log)
+        menu.add_command(label="Protokoll …", command=self.open_log)
         menu.add_command(label="Dienst neu starten", command=self.restart)
         menu.add_separator()
         self.autostart_var = tk.BooleanVar(value=bool(autostart.is_enabled()))
@@ -813,7 +814,7 @@ class App:
                 pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
                 pystray.MenuItem("Hardware-Test …", call(self.selftest)),
                 pystray.MenuItem("Temperatursensoren testen …", call(self.sensor_test)),
-                pystray.MenuItem("Log öffnen", call(self.open_log)),
+                pystray.MenuItem("Protokoll …", call(self.open_log)),
                 pystray.MenuItem("Dienst neu starten", call(self.restart)),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Mit Windows starten", call(self.toggle_autostart),
@@ -878,10 +879,16 @@ class App:
             self.settings = None
 
     def open_log(self) -> None:
-        if paths.LOG_FILE.exists():
-            self._open(paths.LOG_FILE)
-        else:
-            messagebox.showinfo("Victus Lüftersteuerung", "Noch keine Logdatei vorhanden.")
+        """Protokollfenster öffnen (oder nach vorn holen, falls schon offen)."""
+        from .log_window import LogWindow
+
+        self.show()
+        if self.log_window is not None:
+            self.log_window.win.deiconify()
+            self.log_window.win.lift()
+            self.log_window.win.focus_force()
+            return
+        self.log_window = LogWindow(self)
 
     def _open(self, path: Path) -> None:
         try:

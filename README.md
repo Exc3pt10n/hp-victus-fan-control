@@ -45,8 +45,8 @@ der Strich darin das Ziel der Steuerung), den Verlauf der letzten 10 Minuten und
 Fährt man mit der Maus über den Verlauf, zeigt er für den Zeitpunkt Temperaturen, Lüfterdrehzahl
 sowie das aktive Lüfterprofil und den Leistungsmodus; gestrichelte Linien markieren Wechsel.
 Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktionen
-(Einstellungen, Updates, Hardware-Test, Sensoren, Log, Dienst neu starten, Autostart) liegen
-unter **Extras**.
+(Einstellungen, Protokoll, Updates, Hardware-Test, Sensoren, Dienst neu starten, Autostart)
+liegen unter **Extras**.
 
 **Extras ▸ Einstellungen …** ändert die Konfiguration ohne Texteditor:
 
@@ -60,6 +60,10 @@ unter **Extras**.
 Gespeichert werden nur geänderte Werte; die Datei wird vorher geprüft, Kommentare bleiben erhalten,
 und die Lüftersteuerung übernimmt die Änderung sofort. „Als Textdatei öffnen“ zeigt die
 `config.toml` für alle weiteren Einstellungen.
+
+**Extras ▸ Protokoll …** zeigt das Log der Lüftersteuerung und der Updates lesbar an: Warnungen
+orange, Fehler rot, filterbar („Warnungen & Fehler“) und durchsuchbar. Neue Einträge erscheinen
+automatisch; „Kopieren“ legt die angezeigten Zeilen in die Zwischenablage.
 Schließen (✕) blendet das Fenster nur aus.
 
 Oben rechts schaltet der Schalter **Steuerung an/aus** die Lüftersteuerung ein oder aus. Aus heißt:
@@ -192,6 +196,7 @@ GitHub-Release mit automatischen Änderungsnotizen an. Ohne Versionssprung wird 
 | `backends/windows.py` | HP-BIOS über WMI (`hpqBIntM`); Befehlscodes aus der Community-Dokumentation (z. B. OmenMon) |
 | `gui.py` | Tray-Icon und Fenster |
 | `settings_dialog.py` | Einstellungsfenster mit Kurveneditor |
+| `log_window.py`, `logparse.py` | Protokollfenster bzw. Zerlegen der Logzeilen |
 | `selftest.py`, `sensors.py` | Hardware-Test und Sensor-Test |
 | `updater.py` | Auto-Update über GitHub |
 | `state.py` | Austausch zwischen Dienst und Oberfläche (`status.json`, `override.json`) |
