@@ -2,7 +2,7 @@
 # Ort: C:\ProgramData\VictusFan\config.toml
 # Änderungen werden nach dem Speichern automatisch übernommen.
 # Fehlt ein Wert, gilt der eingebaute Standard. Ist die Datei fehlerhaft,
-# bleibt die bisherige Einstellung aktiv (Hinweis im Log).
+# bleibt die bisherige Einstellung aktiv (Hinweis im Fenster und im Log).
 
 [general]
 profile = "balanced"          # Profil im Netzbetrieb
