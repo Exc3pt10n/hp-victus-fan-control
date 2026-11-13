@@ -606,6 +606,27 @@ def _dark_title_bar(root: tk.Tk) -> None:
         pass
 
 
+def hide_until_placed(win: tk.Toplevel) -> None:
+    """Neues Fenster unsichtbar aufbauen, damit es nicht erst oben links aufblitzt.
+
+    Bewusst über Transparenz statt withdraw(): Das Fenster wird dabei schon
+    erzeugt, so dass Windows die dunkle Titelleiste vor dem Anzeigen übernimmt.
+    """
+    try:
+        win.attributes("-alpha", 0.0)
+    except tk.TclError:
+        pass
+
+
+def reveal(win: tk.Toplevel) -> None:
+    """Fertig platziertes Fenster sichtbar machen (Gegenstück zu hide_until_placed)."""
+    win.update_idletasks()
+    try:
+        win.attributes("-alpha", 1.0)
+    except tk.TclError:
+        pass
+
+
 # --------------------------------------------------------------------------
 # Fenster
 # --------------------------------------------------------------------------
