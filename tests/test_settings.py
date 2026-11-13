@@ -42,6 +42,12 @@ class SaveSettingsTest(unittest.TestCase):
         line = next(l for l in self.path.read_text(encoding="utf-8").splitlines() if l.startswith("profile ="))
         self.assertEqual(line, 'profile = "quiet"             # Profil im Netzbetrieb')
 
+    def test_comment_with_quotes_is_kept(self):
+        save_settings(self.path, {"windows": {"cpu_sensor": "perf:\\_TZ.THRM"}})
+        line = next(l for l in self.path.read_text(encoding="utf-8").splitlines() if l.startswith("cpu_sensor ="))
+        self.assertTrue(line.endswith('# auto oder eine id aus "victus-fan sensors"'), line)
+        self.assertEqual(load_config(self.path).windows["cpu_sensor"], "perf:\\_TZ.THRM")
+
     def test_creates_missing_file(self):
         self.path.unlink()
         save_settings(self.path, {"general": {"battery_profile": "balanced"}})

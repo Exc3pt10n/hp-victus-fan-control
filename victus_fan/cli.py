@@ -203,7 +203,9 @@ def cmd_selftest(args) -> int:
     if args.apply and rec.get("mode"):
         try:
             # Geprüft speichern: ein unplausibler Messwert darf die Datei nicht ungültig machen.
-            save_settings(args.config, {"windows": rec}, note="vom Hardware-Test gesetzt")
+            from .config import HARDWARE_TEST_VERSION
+            save_settings(args.config, {"windows": dict(rec, hardware_test=HARDWARE_TEST_VERSION)},
+                          note="vom Hardware-Test gesetzt")
             print(f"\nEinstellungen in {args.config} gespeichert: {rec}")
             print("Der Dienst übernimmt sie automatisch innerhalb weniger Sekunden.")
         except Exception as exc:  # noqa: BLE001
@@ -291,6 +293,18 @@ def cmd_sensors(args) -> int:
     return finish(0)
 
 
+def cmd_migrate_config(args) -> int:
+    from .migrate import migrate_config
+
+    try:
+        result = migrate_config(args.config, args.template)
+    except Exception as exc:  # noqa: BLE001 - Installer soll weiterlaufen, alte Datei bleibt
+        print(f"Konfiguration nicht aktualisiert: {exc}")
+        return 1
+    print(result.summary())
+    return 0
+
+
 def cmd_curve(args) -> int:
     cfg = _config(args)
     profile = cfg.profile(args.name or cfg.general["profile"])
@@ -371,6 +385,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--apply", action="store_true", help="beste Quelle als CPU-Sensor speichern")
     p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
     p.set_defaults(func=cmd_sensors)
+
+    p = sub.add_parser("migrate-config", help="config.toml auf den aktuellen Aufbau bringen (Installer)")
+    p.add_argument("--template", required=True, help="Pfad zur config.example.toml")
+    p.set_defaults(func=cmd_migrate_config)
 
     p = sub.add_parser("curve", help="Lüfterkurve eines Profils anzeigen")
     p.add_argument("name", nargs="?")

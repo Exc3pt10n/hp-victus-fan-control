@@ -225,7 +225,13 @@ try {
         Copy-Item (Join-Path $RepoDir "config.example.toml") $configFile
         Write-Host "config.toml angelegt"
     } else {
-        Write-Host "Vorhandene config.toml bleibt erhalten"
+        # Ältere Dateien auf den aktuellen Aufbau bringen: eigene Werte bleiben, veraltete
+        # Einträge fallen weg, die alte Datei wird als config.toml.bak gesichert.
+        $template = Join-Path $RepoDir "config.example.toml"
+        if ((Invoke-Native $venvPython @("-m", "victus_fan", "--config", $configFile, "migrate-config",
+                "--template", $template)) -ne 0) {
+            Write-Warning "Konfiguration konnte nicht aktualisiert werden - die bisherige bleibt unverändert"
+        }
     }
     # Normale Benutzer dürfen Profil/Modus umschalten und die Konfiguration bearbeiten.
     $override = Join-Path $DataDir "override.json"

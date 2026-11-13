@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -76,6 +75,9 @@ DEFAULTS: dict = {
         # Maximale Lüfterstufe in 100 U/min (54 = 5400 U/min).
         "max_level_cpu": 54,
         "max_level_gpu": 52,
+        # Stand des Hardware-Tests, der die Werte oben gemessen hat (0 = noch nie).
+        # Ist er kleiner als HARDWARE_TEST_VERSION, bittet das Fenster um einen Test.
+        "hardware_test": 0,
         # Das BIOS fällt nach ca. 120 s ohne Befehl in seine Automatik zurück -
         # deshalb regelmäßig erneut senden.
         "keepalive": 60.0,
@@ -109,6 +111,11 @@ DEFAULTS: dict = {
 # --------------------------------------------------------------------------
 # Höchste erlaubte Notfall-Temperatur - fest, nicht konfigurierbar höher.
 MAX_CRITICAL_TEMP = 95.0
+# Aufbau der config.toml. Bei jeder Änderung erhöhen und migrate.py ergänzen.
+CONFIG_VERSION = 3
+# Messverfahren des Hardware-Tests. Erhöhen, wenn alte Messwerte nicht mehr
+# passen - dann bittet das Fenster einmal um einen neuen Test.
+HARDWARE_TEST_VERSION = 1
 
 NUMBER_LIMITS: dict[str, dict[str, tuple[float, float]]] = {
     "general": {"interval": (0.5, 30), "critical_temp": (60, MAX_CRITICAL_TEMP)},
@@ -116,10 +123,11 @@ NUMBER_LIMITS: dict[str, dict[str, tuple[float, float]]] = {
                 "spin_down_delay": (0, 600), "ramp_up_rate": (0.1, 100), "ramp_down_rate": (0.1, 100),
                 "min_running_percent": (0, 60)},
     "windows": {"min_level": (0, 40), "max_level_cpu": (20, 80), "max_level_gpu": (20, 80),
-                "keepalive": (5, 110), "mode_keepalive": (5, 110)},
+                "hardware_test": (0, 1000), "keepalive": (5, 110), "mode_keepalive": (5, 110)},
     "toggle": {"engage_percent": (1, 100), "release_percent": (0, 99), "min_on_time": (0, 600)},
 }
-INTEGERS = {("windows", "min_level"), ("windows", "max_level_cpu"), ("windows", "max_level_gpu")}
+INTEGERS = {("windows", "min_level"), ("windows", "max_level_cpu"), ("windows", "max_level_gpu"),
+            ("windows", "hardware_test")}
 CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     # "auto" stand in Konfigurationen früherer Versionen und gilt weiter (= windows bzw. level).
     ("general", "backend"): ("windows", "simulate", "auto"),
@@ -133,6 +141,9 @@ STRINGS = {("general", "profile"), ("general", "battery_profile"), ("windows", "
 
 def validate(raw: dict) -> None:
     """Prüft alle bekannten Werte; wirft ValueError mit verständlicher Meldung."""
+    version = raw.get("config_version", 0)
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise ValueError("config_version: ganze Zahl erwartet")
     for section in ("general", "control", "windows", "update", "toggle", "profiles"):
         if not isinstance(raw.get(section), dict):
             raise ValueError(f"[{section}] muss eine Sektion sein")
@@ -265,6 +276,25 @@ def _toml_value(value) -> str:
     return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
+def _comment_start(line: str) -> int | None:
+    """Spalte des Kommentars (#) einer TOML-Zeile - ein # in einem String zählt nicht."""
+    quote = None
+    i = 0
+    while i < len(line):
+        c = line[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 1                      # Escape überspringen
+            elif c == quote:
+                quote = None
+        elif c in "\"'":
+            quote = c
+        elif c == "#":
+            return i
+        i += 1
+    return None
+
+
 def update_config_values(path: str | Path, section: str, values: dict, note: str = "") -> None:
     """Setzt einzelne Werte in einer Sektion der config.toml und lässt den Rest
     (inkl. Kommentaren) unverändert."""
@@ -286,10 +316,9 @@ def update_config_values(path: str | Path, section: str, values: dict, note: str
                     new += comment
                 else:
                     # Erklärenden Kommentar der Zeile behalten (Spalte wie bisher)
-                    m = re.search(r"\s+(#[^\"']*)$", lines[i])
-                    if m:
-                        col = lines[i].index(m.group(1))
-                        new = new.ljust(col - 1) + " " + m.group(1)
+                    col = _comment_start(lines[i])
+                    if col is not None:
+                        new = new.ljust(col - 1) + " " + lines[i][col:]
                 lines[i] = new
         for offset, (k, v) in enumerate(pending.items()):
             lines.insert(start + 1 + offset, f"{k} = {_toml_value(v)}{comment}")

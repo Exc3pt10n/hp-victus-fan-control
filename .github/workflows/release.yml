@@ -91,9 +91,17 @@ jobs:
                  Where-Object { $_.FileSystemRights -match "Write|Modify|FullControl|CreateFiles" })) "Benutzer duerfen im Datenordner nichts anlegen"
           & icacls (Join-Path $data "config.toml")
 
-          Write-Host "=== Update (wie der Auto-Updater) ==="
+          Write-Host "=== Update (wie der Auto-Updater) mit alter Konfiguration ==="
+          $config = Join-Path $data "config.toml"
+          [IO.File]::WriteAllText($config, [IO.File]::ReadAllText((Resolve-Path tests\legacy_configs\user-2.7.toml)))
           & .\install\windows\install.ps1 -Unattended -SourceSha ci-test -SourceBranch ci
           Check ($LASTEXITCODE -eq 0) "Unbeaufsichtigtes Update"
+          $migrated = [IO.File]::ReadAllText($config)
+          Check ($migrated -match '(?m)^config_version = \d+') "Konfiguration migriert"
+          Check ($migrated -match '(?m)^hardware_test = 1') "Messwerte des Hardware-Tests uebernommen"
+          Check ($migrated -notmatch 'backend = "auto"') "Veralteter Eintrag entfernt"
+          Check (Test-Path (Join-Path $data "config.toml.bak")) "Sicherung config.toml.bak"
+          Check ((& icacls $config | Out-String) -match "Users:\(M\)") "Benutzer duerfen die Konfiguration weiter bearbeiten"
           $info = Get-Content (Join-Path $dir "installed.json") -Raw | ConvertFrom-Json
           Check ($info.sha -eq "ci-test" -and $info.source -eq "auto-update") "installed.json aktualisiert"
           & $py -m victus_fan update --check

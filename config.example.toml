@@ -4,6 +4,10 @@
 # Fehlt ein Wert, gilt der eingebaute Standard. Ist die Datei fehlerhaft,
 # bleibt die bisherige Einstellung aktiv (Hinweis im Fenster und im Log).
 
+# Aufbau dieser Datei - der Installer bringt ältere Dateien damit auf den aktuellen
+# Stand (eigene Werte bleiben, die alte Datei wird als config.toml.bak gesichert).
+config_version = 3
+
 [general]
 profile = "balanced"          # Profil im Netzbetrieb
 battery_profile = "quiet"     # Profil im Akkubetrieb
@@ -28,6 +32,7 @@ cpu_sensor = "auto"           # auto oder eine id aus "victus-fan sensors"
 min_level = 0                 # kleinste wirksame Stufe > 0
 max_level_cpu = 54            # 54 = 5400 U/min
 max_level_gpu = 52
+hardware_test = 0             # 1 = Hardware-Test ausgeführt (sonst Hinweis im Fenster)
 keepalive = 60.0              # Drehzahl erneut senden (das BIOS übernimmt nach ~120 s ohne Befehl)
 mode_keepalive = 50.0         # BIOS-Modus erneut setzen (sonst ignoriert das BIOS die Drehzahl)
 

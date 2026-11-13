@@ -23,7 +23,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from . import __version__, autostart, paths
-from .config import load_config
+from .config import HARDWARE_TEST_VERSION, load_config
 from .state import read_override, read_status, write_override
 from .ui.icons import make_fan_image, make_tray_image
 from .ui.system import (SingleInstance, open_file, restart_service, run_elevated_console,
@@ -48,6 +48,7 @@ class App:
         apply_theme(windows_uses_dark_mode())
 
         self.config_path = Path(config_path) if config_path else paths.CONFIG_FILE
+        self._hw_check: tuple[float | None, bool] = (None, False)   # (mtime, Hardware-Test nötig?)
         self.instance = instance
         self.history: deque = deque(maxlen=HISTORY_SECONDS // 2 + 10)
         self.last_ts = None
@@ -482,6 +483,21 @@ class App:
         self.state_dot.config(fg=color)
         self.state_text.config(text=text, fg=C.TEXT if color != OFF else C.MUTED)
 
+    def _hardware_test_needed(self) -> bool:
+        """Fehlt der Hardware-Test (oder stammt er von einem älteren Messverfahren)?
+        Die Konfiguration wird nur neu gelesen, wenn sie sich geändert hat."""
+        try:
+            mtime = self.config_path.stat().st_mtime
+        except OSError:
+            return False
+        if mtime != self._hw_check[0]:
+            try:
+                needed = load_config(self.config_path).windows["hardware_test"] < HARDWARE_TEST_VERSION
+            except Exception:  # noqa: BLE001 - fehlerhafte Datei meldet der Dienst selbst
+                needed = False
+            self._hw_check = (mtime, needed)
+        return self._hw_check[1]
+
     def _show_banner(self, text: str | None, action: str = "", command=None) -> None:
         if text:
             self.banner_text.config(text=text)
@@ -521,6 +537,10 @@ class App:
         elif s.get("config_error"):
             self._show_banner(f"Konfiguration fehlerhaft: {s['config_error']}", "Konfiguration öffnen",
                               lambda: self._open(self.config_path))
+        elif self._hardware_test_needed():
+            self._show_banner("Der Hardware-Test wurde noch nicht ausgeführt. Er prüft in etwa 1,5 Minuten, "
+                              "welche Lüfterbefehle dein Notebook umsetzt. Optional danach: Extras ▸ "
+                              "„Temperatursensoren testen“.", "Hardware-Test", self.selftest)
         else:
             self._show_banner(None)
 

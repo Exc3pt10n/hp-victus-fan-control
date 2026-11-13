@@ -147,6 +147,13 @@ victus-fan update --branch release
 
 (`release` = wieder nur freigegebene Versionen.)
 
+Deine `config.toml` bleibt bei Updates erhalten und wird bei Bedarf auf den aktuellen Aufbau
+gebracht: eigene Werte und Kurven sowie die Messwerte von Hardware- und Sensor-Test bleiben,
+veraltete oder ungültige Einträge fallen weg (dann gilt der Standard). Die vorherige Datei liegt
+danach als `config.toml.bak` daneben. Hardware- und Sensor-Test musst du nach einem Update nicht
+wiederholen; das Fenster bittet nur darum, wenn der Hardware-Test noch nie lief oder eine neue
+Version anders misst.
+
 Ein Update wird erst vollständig heruntergeladen und danach lokal installiert und geprüft.
 Bricht es ab, bleibt die bisherige Version erhalten bzw. wird aus ihren aufgehobenen Paketen
 wiederhergestellt.
@@ -173,6 +180,7 @@ Ende der Ausgabe schicken.
 | Datei in `C:\ProgramData\VictusFan` | Inhalt |
 |---|---|
 | `config.toml` | Konfiguration – am einfachsten über Extras ▸ Einstellungen; Änderungen gelten sofort ([Beispiel](config.example.toml)) |
+| `config.toml.bak` | Stand vor der letzten Anpassung durch ein Update |
 | `victus-fan.log` | Log der Lüftersteuerung |
 | `update.log`, `update-install.log` | Log der Updates |
 
@@ -225,6 +233,7 @@ GitHub-Release mit automatischen Änderungsnotizen an. Ohne Versionssprung wird 
 | `log_window.py`, `logparse.py` | Protokollfenster bzw. Zerlegen der Logzeilen |
 | `selftest.py`, `sensors.py` | Hardware-Test und Sensor-Test |
 | `updater.py` | Auto-Update über GitHub (Quelle fest im Code, siehe unten) |
+| `migrate.py` | Bringt die `config.toml` beim Update auf den aktuellen Aufbau |
 | `state.py` | Austausch zwischen Dienst und Oberfläche (`status.json`, `override.json`) |
 
 Lizenz: MIT
