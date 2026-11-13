@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -191,6 +192,8 @@ def _toml_value(value) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
     return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
@@ -210,13 +213,52 @@ def update_config_values(path: str | Path, section: str, values: dict, note: str
         for i in range(start + 1, end):
             key = lines[i].split("=")[0].strip()
             if "=" in lines[i] and not lines[i].lstrip().startswith("#") and key in pending:
-                lines[i] = f"{key} = {_toml_value(pending.pop(key))}{comment}"
+                new = f"{key} = {_toml_value(pending.pop(key))}"
+                if note:
+                    new += comment
+                else:
+                    # Erklärenden Kommentar der Zeile behalten (Spalte wie bisher)
+                    m = re.search(r"\s+(#[^\"']*)$", lines[i])
+                    if m:
+                        col = lines[i].index(m.group(1))
+                        new = new.ljust(col - 1) + " " + m.group(1)
+                lines[i] = new
         for offset, (k, v) in enumerate(pending.items()):
             lines.insert(start + 1 + offset, f"{k} = {_toml_value(v)}{comment}")
     text = "\n".join(lines) + "\n"
     tomllib.loads(text)  # nur gültiges TOML schreiben
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def save_settings(path: str | Path, changes: dict[str, dict]) -> Config:
+    """Mehrere Sektionen auf einmal ändern (Einstellungsfenster).
+
+    Die Änderungen werden zuerst in einer Kopie geschrieben und mit
+    ``load_config`` geprüft; nur eine gültige Konfiguration ersetzt das Original.
+    Gibt die neue Konfiguration zurück, wirft ValueError bei ungültigen Werten.
+    """
+    import shutil
+    import tempfile
+
+    path = Path(path)
+    with tempfile.TemporaryDirectory() as tmp:
+        draft = Path(tmp) / "config.toml"
+        if path.exists():
+            shutil.copyfile(path, draft)
+        for section, values in changes.items():
+            if values:
+                update_config_values(draft, section, values)
+        try:
+            cfg = load_config(draft)
+        except (ValueError, KeyError, tomllib.TOMLDecodeError) as exc:
+            raise ValueError(f"Ungültige Einstellung: {exc}") from exc
+        text = draft.read_text(encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Direkt schreiben (nicht ersetzen), damit die Dateirechte für Benutzer erhalten bleiben.
+    path.write_text(text, encoding="utf-8")
+    cfg.path = path
+    return cfg
 
 
 def reset_auto_chosen_fan_mode(path: str | Path) -> bool:

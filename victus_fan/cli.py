@@ -65,7 +65,7 @@ def cmd_status(args) -> int:
     print(f"Stand:        {status['time']}{note}")
     print(f"Modus:        {status.get('mode', 'normal')}")
     if status.get("fan_mode"):
-        print(f"BIOS-Modus:   {status['fan_mode']}")
+        print(f"BIOS-Modus:   {status['fan_mode']}" + ("" if status.get("bios_mode") else " (aus der Konfiguration)"))
     print(f"Backend:      {status['backend']}")
     print(f"Profil:       {status['profile']} ({status['profile_reason']})")
     print(f"CPU:          {status['cpu_temp']} °C (geglättet {status['cpu_smoothed']})")
@@ -97,9 +97,21 @@ def cmd_mode(args) -> int:
     except OSError as exc:
         print(f"Konfiguration nicht schreibbar: {exc}")
         return 1
-    print({"normal": "Intelligente Steuerung aktiv.",
+    print({"normal": "Lüftersteuerung an - die Lüfter folgen dem gewählten Profil.",
            "max": "Lüfter laufen auf voller Drehzahl (zurück mit: victus-fan mode normal).",
            "paused": "Pausiert - das BIOS regelt (zurück mit: victus-fan mode normal)."}[args.name])
+    return 0
+
+
+def cmd_power(args) -> int:
+    value = "" if args.name == "auto" else args.name
+    try:
+        write_override(bios_mode=value)
+    except OSError as exc:
+        print(f"Konfiguration nicht schreibbar: {exc}")
+        return 1
+    print("BIOS-Leistungsmodus aus der Konfiguration." if not value
+          else f"BIOS-Leistungsmodus: {args.name}.")
     return 0
 
 
@@ -293,9 +305,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("name")
     p.set_defaults(func=cmd_profile)
 
-    p = sub.add_parser("mode", help="Steuerung: normal (Intelligent) | max (Volle Drehzahl) | paused (BIOS)")
+    p = sub.add_parser("mode", help="normal (Steuerung an) | max (Lüfter auf Maximum) | paused (Steuerung aus, BIOS regelt)")
     p.add_argument("name", choices=MODES)
     p.set_defaults(func=cmd_mode)
+
+    p = sub.add_parser("power", help="BIOS-Leistungsmodus: default | cool | performance | auto (= Konfiguration)")
+    p.add_argument("name", choices=["auto", "default", "cool", "performance"])
+    p.set_defaults(func=cmd_power)
 
     p = sub.add_parser("gui", help="Tray-Icon und Fenster starten")
     p.add_argument("--hidden", action="store_true", help="nur Tray-Icon, Fenster nicht öffnen")

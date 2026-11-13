@@ -2,7 +2,7 @@
 
 Die Oberfläche läuft im Benutzerkontext und spricht nicht direkt mit der
 Hardware: Sie liest ``status.json`` des Dienstes und schreibt Wünsche
-(Lüfterprofil, Steuerung) nach ``override.json``.
+(Lüfter, Steuerung an/aus, Leistungsmodus) nach ``override.json``.
 """
 
 from __future__ import annotations
@@ -36,24 +36,35 @@ FONT = "Segoe UI"
 # --------------------------------------------------------------------------
 # Texte
 # --------------------------------------------------------------------------
+# Eine Skala für die Lüfter: die Profile plus "Maximum" (Steuerung "max").
 PROFILE_LABELS = {"auto": "Automatisch", "quiet": "Leise", "balanced": "Ausgewogen",
-                  "performance": "Leistung"}
-PROFILE_HINTS = {
+                  "performance": "Stark"}
+MAX_LABEL = "Maximum"
+FAN_HINTS = {
     "auto": "Ausgewogen am Netzteil, Leise im Akkubetrieb.",
     "quiet": "Lüfter stehen unter 50 °C still und laufen danach sanft an.",
     "balanced": "Leise im Alltag, kühlt unter Last kräftig.",
-    "performance": "Kühlt früh und stark – für Spiele und Rendering.",
+    "performance": "Kühlt früh und kräftig – für Spiele und Rendering.",
+    "max": "Beide Lüfter laufen dauerhaft mit voller Drehzahl (≈ 5400 U/min).",
 }
-MODE_LABELS = {"normal": "Intelligent", "max": "Volle Drehzahl", "paused": "BIOS"}
-MODE_HINTS = {
-    "normal": "Die Lüfter folgen dem Lüfterprofil.",
-    "max": "Beide Lüfter laufen dauerhaft auf Maximum.",
-    "paused": "Die Steuerung pausiert – das BIOS regelt wie ab Werk.",
+PAUSED_HINT = "Die Lüftersteuerung ist aus – das BIOS regelt die Lüfter wie ab Werk."
+
+# BIOS-Leistungsmodus (wie im OMEN Gaming Hub).
+BIOS_LABELS = {"default": "Standard", "cool": "Kühl", "performance": "Performance"}
+BIOS_HINTS = {
+    "default": "Normale Leistungsgrenzen des Notebooks.",
+    "cool": "Laut HP weniger Leistung und ein kühleres Gehäuse.",
+    "performance": "Laut HP mehr Leistung für Spiele.",
 }
 
 
 def profile_label(name: str) -> str:
     return PROFILE_LABELS.get(name, name)
+
+
+def fan_choice(override: dict) -> str:
+    """Gewählte Stufe auf der Lüfter-Skala: Profil oder "max"."""
+    return "max" if override.get("mode") == "max" else override.get("profile", "auto")
 
 
 # --------------------------------------------------------------------------
@@ -143,9 +154,9 @@ def tray_tooltip(s: dict | None, running: bool) -> str:
         lines.append(f"Lüfter {fans} U/min")
     output = s.get("output", "")
     if s.get("mode") == "paused":
-        lines.append("Steuerung pausiert (BIOS)")
+        lines.append("Lüftersteuerung aus (BIOS regelt)")
     elif output == "MAX":
-        lines.append("Volle Drehzahl")
+        lines.append(MAX_LABEL)
     elif s.get("warning"):
         lines.append("⚠ Lüfter folgen nicht")
     else:
@@ -371,7 +382,7 @@ class Segmented(tk.Frame):
         for value, label in options:
             w = tk.Label(self, text=label, font=(FONT, 9), padx=12, pady=5, cursor="hand2")
             w.pack(side="left", padx=(0, 2))
-            w.bind("<Button-1>", lambda _e, v=value: self.command(v))
+            w.bind("<Button-1>", lambda _e, v=value: self.enabled and self.command(v))
             w.bind("<Enter>", lambda _e, v=value: self._paint(hover=v))
             w.bind("<Leave>", lambda _e: self._paint())
             self.items[value] = w
@@ -388,9 +399,42 @@ class Segmented(tk.Frame):
                 bg = C.SELECTED if self.enabled else C.HOVER
                 fg = C.SELECTED_TEXT if self.enabled else C.MUTED
             else:
-                bg = C.HOVER if value == hover else C.TRACK
+                bg = C.HOVER if value == hover and self.enabled else C.TRACK
                 fg = C.TEXT if self.enabled else C.MUTED
-            w.config(bg=bg, fg=fg, activebackground=bg)
+            w.config(bg=bg, fg=fg, activebackground=bg, cursor="hand2" if self.enabled else "arrow")
+
+
+class Switch(tk.Canvas):
+    """Ein/Aus-Schalter im Stil von Windows 11."""
+
+    W, H = 44, 22
+
+    def __init__(self, master, command, bg: str):
+        super().__init__(master, width=self.W, height=self.H, bg=bg, highlightthickness=0, cursor="hand2")
+        self.command = command
+        self.on = True
+        self.bind("<Button-1>", lambda _e: self.command(not self.on))
+        self._draw()
+
+    def set(self, on: bool) -> None:
+        if on != self.on:
+            self.on = on
+            self._draw()
+
+    def _draw(self) -> None:
+        self.delete("all")
+        w, h, r = self.W, self.H, self.H / 2
+        fill = C.SELECTED if self.on else C.TRACK
+        outline = C.SELECTED if self.on else C.MUTED
+        self.create_oval(1, 1, h - 1, h - 1, fill=fill, outline=outline)
+        self.create_oval(w - h + 1, 1, w - 1, h - 1, fill=fill, outline=outline)
+        self.create_rectangle(r, 1, w - r, h - 1, fill=fill, outline="")
+        self.create_line(r, 1, w - r, 1, fill=outline)
+        self.create_line(r, h - 1, w - r, h - 1, fill=outline)
+        knob = 5
+        x = w - r if self.on else r
+        self.create_oval(x - r + knob, knob, x + r - knob, h - knob,
+                         fill=C.SELECTED_TEXT if self.on else C.MUTED, outline="")
 
 
 class Metric(Card):
@@ -440,19 +484,39 @@ class Metric(Card):
 
 
 class Chart(tk.Canvas):
-    """Verlauf der letzten 10 Minuten: CPU, GPU (°C) und Lüfter (% der Maximaldrehzahl)."""
+    """Verlauf der letzten 10 Minuten: CPU, GPU (°C) und Lüfter (% der Maximaldrehzahl).
+
+    Mit der Maus darüber: Messpunkt mit Uhrzeit, Werten, Lüfterprofil und
+    Leistungsmodus. Gestrichelte Linien markieren, wann Profil oder Leistung
+    gewechselt haben.
+    """
 
     PAD_L, PAD_R, PAD_T, PAD_B = 30, 8, 8, 18
+    SERIES = (("fan", FAN_COLOR), ("gpu", GPU_COLOR), ("cpu", CPU_COLOR))
 
     def __init__(self, master, history: deque):
-        super().__init__(master, bg=C.CARD, height=140, width=300, highlightthickness=0)
+        super().__init__(master, bg=C.CARD, height=150, width=300, highlightthickness=0)
         self.history = history
+        self.hover_x: int | None = None
         self.bind("<Configure>", lambda _e: self.redraw())
+        self.bind("<Motion>", self._on_motion)
+        self.bind("<Leave>", self._on_leave)
+
+    def _on_motion(self, event) -> None:
+        self.hover_x = event.x
+        self.redraw()
+
+    def _on_leave(self, _event) -> None:
+        self.hover_x = None
+        self.redraw()
 
     def _xy(self, t, v, now, w, h):
         pw, ph = w - self.PAD_L - self.PAD_R, h - self.PAD_T - self.PAD_B
         return (self.PAD_L + pw * (1 - (now - t) / HISTORY_SECONDS),
                 self.PAD_T + ph * (1 - max(0, min(100, v)) / 100))
+
+    def _visible(self, now: float) -> list[dict]:
+        return [e for e in self.history if now - e["t"] <= HISTORY_SECONDS]
 
     def redraw(self) -> None:
         self.delete("all")
@@ -460,6 +524,7 @@ class Chart(tk.Canvas):
         if w < 50:
             return
         now = time.time()
+        entries = self._visible(now)
         for v in (0, 50, 100):
             _, y = self._xy(now, v, now, w, h)
             self.create_line(self.PAD_L, y, w - self.PAD_R, y, fill=C.BORDER)
@@ -468,18 +533,62 @@ class Chart(tk.Canvas):
             x, _ = self._xy(now - minutes * 60, 0, now, w, h)
             self.create_text(x, h - 2, text="jetzt" if minutes == 0 else f"−{minutes} min",
                              anchor=anchor, fill=C.MUTED, font=(FONT, 8))
+
+        # Wechsel von Lüfterprofil oder Leistung: gestrichelte senkrechte Linie
+        for prev, cur in zip(entries, entries[1:]):
+            if (prev["fan_label"], prev["bios"]) != (cur["fan_label"], cur["bios"]):
+                x, _ = self._xy(cur["t"], 0, now, w, h)
+                self.create_line(x, self.PAD_T, x, h - self.PAD_B, fill=C.MUTED, dash=(2, 3))
+
         drawn = False
-        for index, color in ((3, FAN_COLOR), (2, GPU_COLOR), (1, CPU_COLOR)):
+        for key, color in self.SERIES:
             points = []
-            for entry in self.history:
-                if entry[index] is not None and now - entry[0] <= HISTORY_SECONDS:
-                    points.extend(self._xy(entry[0], entry[index], now, w, h))
+            for e in entries:
+                if e[key] is not None:
+                    points.extend(self._xy(e["t"], e[key], now, w, h))
             if len(points) >= 4:
                 self.create_line(*points, fill=color, width=2, smooth=True)
                 drawn = True
         if not drawn:
             self.create_text(w / 2, h / 2 - 6, text="Verlauf erscheint nach einigen Sekunden",
                              fill=C.MUTED, font=(FONT, 9))
+            return
+        if self.hover_x is not None and self.PAD_L <= self.hover_x <= w - self.PAD_R:
+            self._draw_hover(entries, now, w, h)
+
+    def _draw_hover(self, entries: list[dict], now: float, w: int, h: int) -> None:
+        nearest = min(entries, key=lambda e: abs(self._xy(e["t"], 0, now, w, h)[0] - self.hover_x))
+        x, _ = self._xy(nearest["t"], 0, now, w, h)
+        self.create_line(x, self.PAD_T, x, h - self.PAD_B, fill=C.TEXT, width=1)
+        for key, color in self.SERIES:
+            if nearest[key] is not None:
+                _, y = self._xy(nearest["t"], nearest[key], now, w, h)
+                self.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline=C.CARD, width=2)
+
+        lines = [time.strftime("%H:%M:%S", time.localtime(nearest["t"])),
+                 f"CPU {fmt_temp(nearest['cpu'])} · GPU {fmt_temp(nearest['gpu'])}"]
+        rpm = nearest.get("rpm") or []
+        fan = f"{nearest['fan']:.0f} %" if nearest["fan"] is not None else "–"
+        lines.append(f"Lüfter {fan}" + (f" · {' / '.join(f'{r:,}'.replace(',', '.') for r in rpm)} U/min"
+                                        if rpm else ""))
+        lines.append(f"Profil: {nearest['fan_label']}")
+        lines.append(f"Leistung: {nearest['bios'] or '–'}")
+
+        # Infofeld neben der Linie, auf der Seite mit mehr Platz: Uhrzeit fett, darunter die Werte
+        head = self.create_text(0, 0, text=lines[0], anchor="nw", fill=C.TEXT, font=(FONT, 8, "bold"))
+        body = self.create_text(0, 0, text="\n".join(lines[1:]), anchor="nw", fill=C.TEXT,
+                                font=(FONT, 8), justify="left")
+        hx1, hy1, hx2, hy2 = self.bbox(head)
+        bx1, by1, bx2, by2 = self.bbox(body)
+        bw = max(hx2 - hx1, bx2 - bx1) + 16
+        bh = (hy2 - hy1) + 2 + (by2 - by1) + 12
+        left = x + 10 if x + 10 + bw <= w - self.PAD_R else x - 10 - bw
+        top = self.PAD_T
+        self.create_rectangle(left, top, left + bw, top + bh, fill=C.TRACK, outline=C.BORDER)
+        self.coords(head, left + 8, top + 6)
+        self.coords(body, left + 8, top + 6 + (hy2 - hy1) + 2)
+        self.tag_raise(head)
+        self.tag_raise(body)
 
 
 def _dark_title_bar(root: tk.Tk) -> None:
@@ -514,6 +623,8 @@ class App:
         self.status: dict | None = None
         self.calls: queue.Queue = queue.Queue()
         self.tray = None
+        self.settings = None             # offenes Einstellungsfenster
+        self.log_window = None           # offenes Protokollfenster
         self._install_mtime = self._installed_mtime()
         self._relaunch_pending = False
         self._warning_shown = False
@@ -521,7 +632,7 @@ class App:
         self.root = tk.Tk()
         self.root.title("Victus Lüftersteuerung")
         self.root.configure(bg=C.BG)
-        self.root.minsize(600, 600)   # feste Breite: das Fenster springt nicht mit der Textlänge
+        self.root.minsize(680, 610)   # feste Breite: das Fenster springt nicht mit der Textlänge
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         try:
             from PIL import ImageTk
@@ -562,7 +673,15 @@ class App:
         # Kopf: Titel + verständliche Statuszeile
         head = tk.Frame(outer, bg=C.BG)
         head.pack(fill="x")
-        self._label(head, "Victus Lüftersteuerung", 14, bold=True).pack(anchor="w")
+        top = tk.Frame(head, bg=C.BG)
+        top.pack(fill="x")
+        self._label(top, "Victus Lüftersteuerung", 14, bold=True).pack(side="left")
+        # Hauptschalter: aus = das BIOS regelt die Lüfter (früher Steuerung "BIOS")
+        self.control_switch = Switch(top, self.set_control, C.BG)
+        self.control_switch.pack(side="right", pady=(4, 0))
+        self.control_label = self._label(top, "Steuerung an", 9, C.MUTED)
+        self.control_label.pack(side="right", padx=(0, 8), pady=(4, 0))
+        self._resume_mode = "normal"
         line = tk.Frame(head, bg=C.BG)
         line.pack(fill="x", pady=(2, 0))
         self.state_dot = self._label(line, "●", 9, OFF)
@@ -605,12 +724,13 @@ class App:
         self.chart = Chart(chart_card, self.history)
         self.chart.pack(fill="x", padx=6, pady=(2, 6))
 
-        # Einstellungen: drei klar getrennte Fragen, jeweils mit Erklärung
+        # Einstellungen: zwei getrennte Fragen - wie arbeiten die Lüfter, und wie
+        # viel Leistung darf das Notebook aufnehmen. Jeweils mit Erklärung.
         settings = Card(outer)
         settings.pack(fill="x", pady=(10, 0))
-        self.profile_seg, self.profile_hint = self._setting(settings, "Lüfterprofil", self.set_profile)
-        self.mode_seg, self.mode_hint = self._setting(settings, "Steuerung", self.set_mode, last=True)
-        self.mode_seg.set_options(list(MODE_LABELS.items()))
+        self.fan_seg, self.fan_hint = self._setting(settings, "Lüfter", self.set_fan)
+        self.bios_seg, self.bios_hint = self._setting(settings, "Leistung (BIOS)", self.set_bios, last=True)
+        self.bios_seg.set_options(list(BIOS_LABELS.items()))
         self._fill_profiles()
 
         # Fußzeile: Version/Update links, Extras rechts
@@ -623,13 +743,14 @@ class App:
                                cursor="hand2", direction="above")
         menu = tk.Menu(extras, tearoff=False, bg=C.CARD, fg=C.TEXT, activebackground=C.SELECTED,
                        activeforeground=C.SELECTED_TEXT, font=(FONT, 9))
+        menu.add_command(label="Einstellungen …", command=self.open_settings)
+        menu.add_separator()
         menu.add_command(label="Nach Updates suchen", command=self.check_updates)
         menu.add_separator()
         menu.add_command(label="Hardware-Test …", command=self.selftest)
         menu.add_command(label="Temperatursensoren testen …", command=self.sensor_test)
         menu.add_separator()
-        menu.add_command(label="Konfiguration bearbeiten", command=self.edit_config)
-        menu.add_command(label="Log öffnen", command=self.open_log)
+        menu.add_command(label="Protokoll …", command=self.open_log)
         menu.add_command(label="Dienst neu starten", command=self.restart)
         menu.add_separator()
         self.autostart_var = tk.BooleanVar(value=bool(autostart.is_enabled()))
@@ -650,8 +771,11 @@ class App:
         hint.pack(fill="x")
         return seg, hint
 
+    def _fan_options(self) -> list[tuple[str, str]]:
+        return [(n, profile_label(n)) for n in self._profiles()] + [("max", MAX_LABEL)]
+
     def _fill_profiles(self) -> None:
-        self.profile_seg.set_options([(n, profile_label(n)) for n in self._profiles()])
+        self.fan_seg.set_options(self._fan_options())
 
     # ---- Tray -------------------------------------------------------------
     def _start_tray(self) -> None:
@@ -664,24 +788,33 @@ class App:
         def call(fn, *args):
             return lambda _icon=None, _item=None: self.calls.put((fn, args))
 
-        def radio(labels: dict, key: str, setter):
-            return [pystray.MenuItem(label, call(setter, value), radio=True,
-                                     checked=lambda _i, v=value: read_override()[key] == v)
-                    for value, label in labels.items()]
+        def fan_items():
+            return [pystray.MenuItem(label, call(self.set_fan, value), radio=True,
+                                     checked=lambda _i, v=value: fan_choice(read_override()) == v,
+                                     enabled=lambda _i: read_override()["mode"] != "paused")
+                    for value, label in self._fan_options()]
+
+        def bios_items():
+            return [pystray.MenuItem(label, call(self.set_bios, value), radio=True,
+                                     checked=lambda _i, v=value: self._bios_choice(read_override()) == v,
+                                     enabled=lambda _i: read_override()["mode"] != "paused")
+                    for value, label in BIOS_LABELS.items()]
 
         menu = pystray.Menu(
             pystray.MenuItem("Fenster öffnen", call(self.show), default=True),
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem("Lüfterprofil", pystray.Menu(
-                lambda: radio({n: profile_label(n) for n in self._profiles()}, "profile", self.set_profile))),
-            pystray.MenuItem("Steuerung", pystray.Menu(*radio(MODE_LABELS, "mode", self.set_mode))),
+            pystray.MenuItem("Lüfter", pystray.Menu(fan_items)),
+            pystray.MenuItem("Leistung (BIOS)", pystray.Menu(bios_items)),
+            pystray.MenuItem("Lüftersteuerung an", call(self.toggle_control),
+                             checked=lambda _i: read_override()["mode"] != "paused"),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Extras", pystray.Menu(
+                pystray.MenuItem("Einstellungen …", call(self.open_settings)),
+                pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Nach Updates suchen", call(self.check_updates)),
                 pystray.MenuItem("Hardware-Test …", call(self.selftest)),
                 pystray.MenuItem("Temperatursensoren testen …", call(self.sensor_test)),
-                pystray.MenuItem("Konfiguration bearbeiten", call(self.edit_config)),
-                pystray.MenuItem("Log öffnen", call(self.open_log)),
+                pystray.MenuItem("Protokoll …", call(self.open_log)),
                 pystray.MenuItem("Dienst neu starten", call(self.restart)),
                 pystray.Menu.SEPARATOR,
                 pystray.MenuItem("Mit Windows starten", call(self.toggle_autostart),
@@ -707,20 +840,55 @@ class App:
                                  "Bitte den Installer erneut ausführen.")
         self.poll(reschedule=False)
 
-    def set_profile(self, name: str) -> None:
-        self._write(profile=name)
+    def set_fan(self, value: str) -> None:
+        """Eine Skala: Profil wählen oder "max" (volle Drehzahl)."""
+        if value == "max":
+            self._write(mode="max")
+        else:
+            self._write(profile=value, mode="normal")
 
-    def set_mode(self, mode: str) -> None:
-        self._write(mode=mode)
+    def set_bios(self, value: str) -> None:
+        self._write(bios_mode=value)
+
+    def set_control(self, on: bool) -> None:
+        """Hauptschalter: aus = Steuerung pausiert, das BIOS regelt."""
+        self._write(mode=self._resume_mode if on else "paused")
+
+    def toggle_control(self) -> None:
+        self.set_control(read_override()["mode"] == "paused")
+
+    def _bios_choice(self, override: dict) -> str:
+        s = self.status if self.status and not self.status.get("stale") else {}
+        return override.get("bios_mode") or s.get("fan_mode") or "default"
 
     def edit_config(self) -> None:
         self._open(self.config_path)
 
+    def open_settings(self) -> None:
+        """Einstellungsfenster öffnen (oder nach vorn holen, falls schon offen)."""
+        from .settings_dialog import SettingsDialog
+
+        self.show()
+        if self.settings is not None:
+            self.settings.win.lift()
+            self.settings.win.focus_force()
+            return
+        try:
+            self.settings = SettingsDialog(self)
+        except Exception:  # noqa: BLE001 - Fehler wurde im Dialog bereits gemeldet
+            self.settings = None
+
     def open_log(self) -> None:
-        if paths.LOG_FILE.exists():
-            self._open(paths.LOG_FILE)
-        else:
-            messagebox.showinfo("Victus Lüftersteuerung", "Noch keine Logdatei vorhanden.")
+        """Protokollfenster öffnen (oder nach vorn holen, falls schon offen)."""
+        from .log_window import LogWindow
+
+        self.show()
+        if self.log_window is not None:
+            self.log_window.win.deiconify()
+            self.log_window.win.lift()
+            self.log_window.win.focus_force()
+            return
+        self.log_window = LogWindow(self)
 
     def _open(self, path: Path) -> None:
         try:
@@ -850,12 +1018,26 @@ class App:
         running = status is not None and not status["stale"]
         if running and status["timestamp"] != self.last_ts:
             self.last_ts = status["timestamp"]
-            self.history.append((status["timestamp"], status["cpu_temp"], status["gpu_temp"],
-                                 self._fan_percent(status)))
+            self.history.append({
+                "t": status["timestamp"], "cpu": status["cpu_temp"], "gpu": status["gpu_temp"],
+                "fan": self._fan_percent(status), "rpm": status.get("fan_rpm") or [],
+                "fan_label": self._fan_label(status),
+                "bios": BIOS_LABELS.get(status.get("fan_mode", ""), ""),
+            })
         self._render_settings(override, status if running else None)
         self._render(status, running)
         if reschedule:
             self.root.after(self.POLL_MS, self.poll)
+
+    @staticmethod
+    def _fan_label(s: dict) -> str:
+        """Aktive Lüfter-Einstellung zu einem Messpunkt (für den Verlauf)."""
+        if s.get("mode") == "paused":
+            return "Steuerung aus (BIOS)"
+        if s.get("mode") == "max":
+            return MAX_LABEL
+        label = profile_label(s.get("profile", ""))
+        return label + (" (automatisch)" if s.get("profile_reason") in ("Netz", "Akku") else "")
 
     @staticmethod
     def _fan_percent(s: dict) -> float | None:
@@ -866,18 +1048,30 @@ class App:
         return None if s.get("output") == "BIOS" else s.get("fan_percent")
 
     def _render_settings(self, override: dict, s: dict | None) -> None:
-        profile, mode = override["profile"], override["mode"]
-        profile_active = mode == "normal"
-        self.profile_seg.set(profile, enabled=profile_active)
-        self.mode_seg.set(mode)
+        mode = override["mode"]
+        active = mode != "paused"
+        if active:
+            self._resume_mode = mode            # beim Wiedereinschalten dorthin zurück
+        self.control_switch.set(active)
+        self.control_label.config(text="Steuerung an" if active else "Steuerung aus",
+                                  fg=C.TEXT if active else C.MUTED)
 
-        hint = PROFILE_HINTS.get(profile, "Eigenes Profil aus der Konfiguration.")
-        if profile == "auto" and s:
-            hint += f" Gerade: {profile_label(s['profile'])} ({s['profile_reason']})."
-        if not profile_active:
-            hint = "Gilt nur bei Steuerung „Intelligent“."
-        self.profile_hint.config(text=hint)
-        self.mode_hint.config(text=MODE_HINTS[mode])
+        choice = fan_choice(override)
+        self.fan_seg.set(choice, enabled=active)
+        if not active:
+            hint = PAUSED_HINT
+        else:
+            hint = FAN_HINTS.get(choice, "Eigenes Profil aus der Konfiguration.")
+            if choice == "auto" and s:
+                hint = hint.rstrip(".") + f" – gerade {profile_label(s['profile'])}."
+        self.fan_hint.config(text=hint)
+
+        bios = self._bios_choice(override)
+        self.bios_seg.set(bios, enabled=active)
+        if not active:
+            self.bios_hint.config(text="Bei ausgeschalteter Lüftersteuerung gilt der BIOS-Standard.")
+        else:
+            self.bios_hint.config(text=BIOS_HINTS.get(bios, ""))
 
     def _set_state(self, text: str, color: str) -> None:
         self.state_dot.config(fg=color)
@@ -910,9 +1104,9 @@ class App:
         elif s.get("warning"):
             self._set_state("Lüfter folgen der Vorgabe nicht", WARN)
         elif mode == "paused":
-            self._set_state("Pausiert – das BIOS regelt die Lüfter", WARN)
+            self._set_state("Lüftersteuerung aus – das BIOS regelt die Lüfter", OFF)
         elif mode == "max":
-            self._set_state("Volle Drehzahl" + battery, WARN)
+            self._set_state(f"Läuft · {MAX_LABEL}{battery}", WARN)
         else:
             self._set_state(f"Läuft · {profile_label(s['profile'])}{battery}", OK)
         self._show_banner(s.get("warning"))
