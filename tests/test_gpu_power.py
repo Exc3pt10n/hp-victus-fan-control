@@ -1,3 +1,4 @@
+import sys
 import unittest
 from unittest import mock
 
@@ -44,6 +45,16 @@ class NvidiaSmiTest(unittest.TestCase):
 
 
 class GpuPowerTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "win32", "nur unter Windows")
+    def test_real_setupapi_call(self):
+        # Echter Aufruf (CI-Runner ohne NVIDIA-GPU): darf nicht abstürzen und liefert
+        # eine Liste von Gerätezuständen bzw. "unbekannt".
+        from victus_fan.backends.gpu_power import _power_states
+        states = _power_states()
+        self.assertIsInstance(states, list)
+        self.assertTrue(all(isinstance(x, int) for x in states))
+        self.assertIn(GpuPower().awake(), (True, False, None))
+
     def test_unknown_outside_windows_or_on_error(self):
         p = GpuPower()
         p._broken = False

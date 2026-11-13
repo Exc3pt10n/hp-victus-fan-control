@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import __version__, paths
 from .backends import BACKENDS, BackendError, create_backend
-from .config import load_config
+from .config import Config, load_config
 from .controller import interpolate
 from .state import MODES, read_status, write_override
 
@@ -33,16 +33,32 @@ def _r(value):
     return None if value is None else round(value, 1)
 
 
+def load_config_or_defaults(path) -> tuple[Config, Exception | None]:
+    """Konfiguration laden; ist sie fehlerhaft, die Standardwerte (und den Fehler).
+
+    Dienst, Updater und "restore" dürfen an einer kaputten config.toml nie
+    scheitern: Der Dienst regelt dann mit Standardwerten weiter (und übernimmt
+    die korrigierte Datei ohne Neustart), und vor allem muss der Updater eine
+    neue Version installieren können, die den Fehler vielleicht behebt.
+    """
+    try:
+        return load_config(path), None
+    except Exception as exc:  # noqa: BLE001
+        return Config(path=Path(path) if path else None), exc
+
+
+def _config(args) -> Config:
+    """Für Befehle von Hand: bei fehlerhafter Datei Standardwerte plus Hinweis."""
+    cfg, error = load_config_or_defaults(args.config)
+    if error is not None:
+        print(f"Hinweis: Konfiguration fehlerhaft ({error}) - nutze Standardwerte")
+    return cfg
+
+
 def cmd_run(args) -> int:
-    from .config import Config
     from .service import FanService
 
-    try:
-        cfg, error = load_config(args.config), None
-    except Exception as exc:  # noqa: BLE001 - Dienst muss trotzdem laufen
-        # Mit Standardwerten weiterregeln statt gar nicht: Sobald die Datei
-        # korrigiert ist, übernimmt der Dienst sie ohne Neustart.
-        cfg, error = Config(path=Path(args.config) if args.config else None), exc
+    cfg, error = load_config_or_defaults(args.config)
     log_file = Path(args.log_file) if args.log_file else paths.LOG_FILE
     _setup_logging("DEBUG" if args.verbose else cfg.general["log_level"], log_file)
     if error is not None:
@@ -50,6 +66,8 @@ def cmd_run(args) -> int:
     backend = create_backend(args.backend or cfg.general["backend"], cfg)
     service = FanService(cfg, backend, status_file=paths.STATUS_FILE,
                          override_file=paths.OVERRIDE_FILE, dry_run=args.dry_run)
+    if error is not None:
+        service.config_error = f"{error} – es gelten die Standardwerte."
     service.install_signal_handlers()
     service.run(verbose=args.verbose)
     return 0
@@ -81,7 +99,7 @@ def cmd_status(args) -> int:
 
 
 def cmd_profile(args) -> int:
-    cfg = load_config(args.config)
+    cfg = _config(args)
     if args.name != "auto" and args.name not in cfg.raw["profiles"]:
         print(f"Unbekanntes Profil. Verfügbar: auto, {', '.join(cfg.raw['profiles'])}")
         return 2
@@ -115,7 +133,7 @@ def cmd_gui(args) -> int:
 
 
 def cmd_diagnose(args) -> int:
-    cfg = load_config(args.config)
+    cfg = _config(args)
     _setup_logging("DEBUG" if args.verbose else "INFO", None)
     try:
         backend = create_backend(args.backend or cfg.general["backend"], cfg)
@@ -141,7 +159,7 @@ def cmd_diagnose(args) -> int:
 
 
 def cmd_restore(args) -> int:
-    cfg = load_config(args.config)
+    cfg = _config(args)
     try:
         backend = create_backend(args.backend or cfg.general["backend"], cfg)
         backend.shutdown()
@@ -154,14 +172,14 @@ def cmd_restore(args) -> int:
 
 def cmd_selftest(args) -> int:
     from . import selftest
-    from .config import update_config_values
+    from .config import save_settings
 
     def finish(code: int) -> int:
         if args.wait:
             input("\nEnter zum Schließen ...")
         return code
 
-    cfg = load_config(args.config)
+    cfg = _config(args)
     print("Hardware-Test der Lüftersteuerung (dauert ca. 1,5 Minuten).")
     print("Die Lüfter werden dabei hörbar schneller und langsamer.\n")
     try:
@@ -184,7 +202,8 @@ def cmd_selftest(args) -> int:
     rec = result.recommendation
     if args.apply and rec.get("mode"):
         try:
-            update_config_values(args.config, "windows", rec, note="vom Hardware-Test gesetzt")
+            # Geprüft speichern: ein unplausibler Messwert darf die Datei nicht ungültig machen.
+            save_settings(args.config, {"windows": rec}, note="vom Hardware-Test gesetzt")
             print(f"\nEinstellungen in {args.config} gespeichert: {rec}")
             print("Der Dienst übernimmt sie automatisch innerhalb weniger Sekunden.")
         except Exception as exc:  # noqa: BLE001
@@ -208,7 +227,9 @@ def cmd_update(args) -> int:
             return 1
         print(f"Updates folgen jetzt jedem Commit von '{name}' (nur zum Testen)." if name
               else "Updates: nur freigegebene Versionen.")
-    cfg = load_config(args.config)
+    cfg, error = load_config_or_defaults(args.config)
+    if error is not None:
+        logging.getLogger(__name__).warning("Konfiguration fehlerhaft (%s) - nutze Standardwerte", error)
     if args.auto and not cfg.update.get("enabled", True):
         logging.getLogger(__name__).info("Auto-Update ist deaktiviert ([update] enabled = false)")
         return 0
@@ -224,7 +245,7 @@ def cmd_sensors(args) -> int:
     import json as _json
 
     from . import sensors
-    from .config import update_config_values
+    from .config import save_settings
 
     def finish(code: int) -> int:
         if args.wait:
@@ -258,16 +279,20 @@ def cmd_sensors(args) -> int:
     print(_json.dumps(results, ensure_ascii=False))
 
     if best and args.apply:
-        update_config_values(args.config, "windows", {"cpu_sensor": best["id"]},
-                             note="von 'victus-fan sensors' gewählt")
-        print(f"\nIn {args.config} als CPU-Quelle gespeichert - der Dienst übernimmt sie sofort.")
+        try:
+            save_settings(args.config, {"windows": {"cpu_sensor": best["id"]}},
+                          note="von 'victus-fan sensors' gewählt")
+            print(f"\nIn {args.config} als CPU-Quelle gespeichert - der Dienst übernimmt sie sofort.")
+        except (OSError, ValueError) as exc:
+            print(f"\nKonnte die Konfiguration nicht speichern: {exc}")
+            return finish(1)
     elif best:
         print("Übernehmen mit: victus-fan sensors --apply")
     return finish(0)
 
 
 def cmd_curve(args) -> int:
-    cfg = load_config(args.config)
+    cfg = _config(args)
     profile = cfg.profile(args.name or cfg.general["profile"])
     print(f"Profil {profile.name}:   °C   CPU-Kurve  GPU-Kurve")
     for t in range(30, 101, 5):

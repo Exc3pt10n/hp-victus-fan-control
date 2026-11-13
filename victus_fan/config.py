@@ -299,7 +299,7 @@ def update_config_values(path: str | Path, section: str, values: dict, note: str
     path.write_text(text, encoding="utf-8")
 
 
-def save_settings(path: str | Path, changes: dict[str, dict]) -> Config:
+def save_settings(path: str | Path, changes: dict[str, dict], note: str = "") -> Config:
     """Mehrere Sektionen auf einmal ändern (Einstellungsfenster).
 
     Die Änderungen werden zuerst in einer Kopie geschrieben und mit
@@ -316,7 +316,7 @@ def save_settings(path: str | Path, changes: dict[str, dict]) -> Config:
             shutil.copyfile(path, draft)
         for section, values in changes.items():
             if values:
-                update_config_values(draft, section, values)
+                update_config_values(draft, section, values, note=note)
         try:
             cfg = load_config(draft)
         except (ValueError, KeyError, tomllib.TOMLDecodeError) as exc:
