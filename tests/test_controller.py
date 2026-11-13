@@ -164,6 +164,15 @@ class ConfigTest(unittest.TestCase):
                         '[update]\nrepo = "x/y"\nbranch = "main"\n')     # alte Schlüssel stören nicht
         self.assertEqual(cfg.general["interval"], 1)
 
+    def test_configs_of_earlier_versions_still_load(self):
+        # Die config.toml bleibt bei Updates erhalten - auch alte Dateien müssen gelten.
+        folder = Path(__file__).resolve().parent / "legacy_configs"
+        files = sorted(folder.glob("*.toml"))
+        self.assertTrue(files)
+        for path in files:
+            with self.subTest(path.name):
+                load_config(path)
+
     def test_invalid_curve_rejected(self):
         cfg = Config()
         cfg.raw["profiles"]["bad"] = {"cpu_curve": [[50, 10], [40, 20]]}

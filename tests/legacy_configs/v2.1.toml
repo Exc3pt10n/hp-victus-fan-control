@@ -1,0 +1,47 @@
+# Konfiguration der Victus-Lüftersteuerung
+# Windows: C:\ProgramData\VictusFan\config.toml
+# Änderungen werden nach dem Speichern automatisch übernommen.
+# Alles, was hier fehlt, nimmt den eingebauten Standardwert.
+
+[general]
+profile = "balanced"          # im Netzbetrieb
+battery_profile = "quiet"     # im Akkubetrieb
+interval = 2.0                # Messintervall in Sekunden
+critical_temp = 92.0          # ab hier sofort volle Drehzahl
+backend = "auto"
+log_level = "INFO"            # DEBUG zeigt jeden Messwert im Log
+
+[control]
+smoothing_up = 0.6            # 0..1, wie schnell auf steigende Temperatur reagiert wird
+smoothing_down = 0.15         # 0..1, wie träge auf fallende Temperatur reagiert wird
+hysteresis = 4.0              # °C Abstand, bevor wieder heruntergeregelt wird
+spin_down_delay = 20.0        # Sekunden Wartezeit vor dem Herunterregeln
+ramp_up_rate = 15.0           # max. Prozentpunkte pro Sekunde nach oben
+ramp_down_rate = 3.0          # max. Prozentpunkte pro Sekunde nach unten
+min_running_percent = 20.0    # Anlaufdrehzahl, wenn die Lüfter laufen sollen
+
+[windows]
+mode = "auto"                 # auto | level | toggle  ("victus-fan selftest --apply" ermittelt den passenden Wert)
+fan_mode = ""                 # BIOS-Leistungsmodus: "" (nicht ändern) | default | performance | cool
+min_level = 0                 # kleinste wirksame Stufe > 0 (wird vom Hardware-Test ermittelt)
+max_level_cpu = 55            # 55 = 5500 U/min (Wert aus "victus-fan diagnose" unter Volllast prüfen)
+max_level_gpu = 57
+keepalive = 60.0              # BIOS übernimmt nach ~120 s ohne Befehl wieder
+
+[update]
+enabled = true                # automatisch nach Updates suchen (beim Start + alle 6 Stunden)
+check_only = false            # true = nur anzeigen, nicht selbst installieren
+repo = "Exc3pt10n/hp-victus-fan-control"
+branch = ""                   # leer = Standard-Branch des Repositories
+
+[toggle]                      # nur für Geräte ohne stufenlose Steuerung
+engage_percent = 80.0         # ab diesem Bedarf: Max-Lüfter an
+release_percent = 55.0        # unter diesem Bedarf: zurück zur BIOS-Automatik
+min_on_time = 60.0            # Max bleibt mindestens so viele Sekunden an
+
+# Eigene Kurven: [Temperatur °C, Lüfter %], aufsteigend sortiert.
+# Beispiel – ein besonders leises Profil für Büroarbeit:
+#
+# [profiles.office]
+# cpu_curve = [[0, 0], [60, 0], [68, 25], [78, 50], [86, 80], [92, 100]]
+# gpu_curve = [[0, 0], [58, 0], [66, 25], [75, 50], [82, 80], [88, 100]]

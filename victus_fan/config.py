@@ -121,9 +121,10 @@ NUMBER_LIMITS: dict[str, dict[str, tuple[float, float]]] = {
 }
 INTEGERS = {("windows", "min_level"), ("windows", "max_level_cpu"), ("windows", "max_level_gpu")}
 CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
-    ("general", "backend"): ("windows", "simulate"),
+    # "auto" stand in Konfigurationen früherer Versionen und gilt weiter (= windows bzw. level).
+    ("general", "backend"): ("windows", "simulate", "auto"),
     ("general", "log_level"): ("DEBUG", "INFO", "WARNING", "ERROR"),
-    ("windows", "mode"): ("level", "toggle"),
+    ("windows", "mode"): ("level", "toggle", "auto"),
     ("windows", "fan_mode"): ("default", "cool", "performance", ""),
 }
 BOOLEANS = {("update", "enabled"), ("update", "check_only")}
