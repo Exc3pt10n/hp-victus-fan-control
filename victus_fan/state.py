@@ -13,9 +13,10 @@ from pathlib import Path
 from . import paths
 
 MODES = ("normal", "max", "paused")
-# Frühere Versionen speicherten hier auch "power_mode" - der Schlüssel wird
-# ignoriert, der BIOS-Leistungsmodus kommt nur noch aus der Konfiguration.
-DEFAULT_OVERRIDE = {"profile": "auto", "mode": "normal"}
+# BIOS-Leistungsmodus aus der Oberfläche; "" = Wert aus der Konfiguration.
+# (Bewusst ein neuer Schlüssel: ein alter "power_mode" aus Version 2.1 wird ignoriert.)
+BIOS_MODES = ("default", "cool", "performance")
+DEFAULT_OVERRIDE = {"profile": "auto", "mode": "normal", "bios_mode": ""}
 # Älter als das gilt der Status als veraltet (Dienst läuft nicht).
 STALE_AFTER = 15.0
 
@@ -31,6 +32,8 @@ def read_override(path: Path | None = None) -> dict:
         pass
     if data["mode"] not in MODES:
         data["mode"] = "normal"
+    if data["bios_mode"] not in BIOS_MODES:
+        data["bios_mode"] = ""
     return data
 
 

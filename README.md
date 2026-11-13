@@ -47,30 +47,24 @@ Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktio
 unter **Extras**.
 Schließen (✕) blendet das Fenster nur aus.
 
-Zwei Einstellungen lassen sich wählen:
+Oben rechts schaltet der Schalter **Steuerung an/aus** die Lüftersteuerung ein oder aus. Aus heißt:
+Das BIOS regelt die Lüfter wie ab Werk. Darunter gibt es zwei Einstellungen:
 
-**Lüfterprofil** – wie stark die Lüfter auf die Temperatur reagieren (gilt bei Steuerung „Intelligent“):
+**Lüfter** – eine Skala von leise bis voll:
 
-| Profil | Verhalten |
+| Lüfter | Verhalten |
 |---|---|
 | **Automatisch** | Ausgewogen am Netzteil, Leise im Akkubetrieb |
 | **Leise** | Lüfter stehen unter 50 °C still, danach sanfter Anstieg |
 | **Ausgewogen** | Mindestens 20 % (≈ 1100 U/min, leiser als die BIOS-Automatik), steigt ab 50 °C |
-| **Leistung** | Mindestens 30 %, steigt früher und steiler |
+| **Stark** | Mindestens 30 %, steigt früher und steiler – für Spiele und Rendering |
+| **Maximum** | Beide Lüfter dauerhaft mit voller Drehzahl (≈ 5400 U/min) |
 
-**Steuerung** – wer die Lüfter steuert:
-
-| Steuerung | Bedeutung |
-|---|---|
-| **Intelligent** | Regelung nach Lüfterprofil |
-| **Volle Drehzahl** | Dauerhaft Maximum (≈ 5400 U/min), z. B. beim Rendern |
-| **BIOS** | Steuerung pausiert, das BIOS regelt wie ab Werk |
-
-**Leistung:** Einen Umschalter für den BIOS-Leistungsmodus (wie im OMEN Gaming Hub) gibt es
-bewusst nicht. Gemessen mit 3DMark Speed Way bringen Standard, Performance und Kühl auf diesem
-Gerät dieselbe Punktzahl (2 284 / 2 275 / 2 275). Was die Leistung wirklich bestimmt, ist die
-**Stromversorgung**: Am HP-Netzteil darf die CPU dauerhaft 54 W aufnehmen (65 W im Boost), an
-einer USB-C-Dockingstation nur 35 W.
+**Leistung (BIOS)** – derselbe Leistungsmodus wie im OMEN Gaming Hub: **Standard**, **Kühl**
+(laut HP weniger Leistung, kühleres Gehäuse) und **Performance** (laut HP mehr Leistung). Auf dem
+Victus BV8D4EA war in 3DMark Speed Way allerdings kein Unterschied messbar (2 284 / 2 275 /
+2 275 Punkte). Was die Leistung wirklich bestimmt, ist die **Stromversorgung**: Am HP-Netzteil
+darf die CPU dauerhaft 54 W aufnehmen (65 W im Boost), an einer USB-C-Dockingstation nur 35 W.
 
 Die Oberfläche läuft mit normalen Benutzerrechten; nur der Hintergrunddienst spricht mit
 der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
@@ -152,8 +146,9 @@ victus-fan status
 
 | Befehl | Wirkung |
 |---|---|
-| `victus-fan profile quiet\|balanced\|performance\|auto` | Profil wählen |
-| `victus-fan mode normal\|max\|paused` | Steuerung wählen (Intelligent, Volle Drehzahl, BIOS) |
+| `victus-fan profile auto\|quiet\|balanced\|performance` | Lüfter: Automatisch, Leise, Ausgewogen, Stark |
+| `victus-fan mode normal\|max\|paused` | Lüfter auf Maximum (`max`), Steuerung aus (`paused`) bzw. wieder an (`normal`) |
+| `victus-fan power auto\|default\|cool\|performance` | Leistung (BIOS); `auto` = Wert aus der Konfiguration |
 | `victus-fan curve balanced` | Lüfterkurve eines Profils anzeigen |
 | `victus-fan selftest --apply` | Hardware-Test (Administrator) |
 | `victus-fan sensors --apply` | Temperaturquellen vergleichen (Administrator) |

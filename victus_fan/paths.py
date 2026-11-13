@@ -16,7 +16,7 @@ else:  # nur für Entwicklung/Tests (z. B. --backend simulate)
 CONFIG_FILE = DATA_DIR / "config.toml"
 # Vom Dienst geschrieben: aktueller Zustand für Oberfläche und "victus-fan status".
 STATUS_FILE = DATA_DIR / "status.json"
-# Von Oberfläche/CLI geschrieben: Lüfterprofil und Steuerung.
+# Von Oberfläche/CLI geschrieben: Lüfter (Profil/Maximum), Steuerung an/aus, BIOS-Leistungsmodus.
 OVERRIDE_FILE = DATA_DIR / "override.json"
 LOG_FILE = DATA_DIR / "victus-fan.log"
 
