@@ -1,106 +1,99 @@
+import json
 import tempfile
-import tomllib
 import unittest
 from pathlib import Path
 
-from victus_fan.config import CONFIG_VERSION, HARDWARE_TEST_VERSION, load_config
+from victus_fan.config import DEFAULT_PROFILES, HARDWARE_TEST_VERSION, load_config
 from victus_fan.migrate import migrate_config
 
-ROOT = Path(__file__).resolve().parent.parent
-TEMPLATE = ROOT / "victus_fan" / "config.example.toml"
-LEGACY = ROOT / "tests" / "legacy_configs"
+LEGACY = Path(__file__).resolve().parent / "legacy_configs"
 
 
 class MigrateTest(unittest.TestCase):
+    """Einmalige Übernahme der config.toml (bis Version 2.8) in settings.json."""
+
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.path = Path(tmp.name) / "config.toml"
+        self.dir = Path(tmp.name)
+        self.settings, self.legacy = self.dir / "settings.json", self.dir / "config.toml"
 
     def migrate(self, text):
-        self.path.write_text(text, encoding="utf-8")
-        result = migrate_config(self.path, TEMPLATE)
-        return result, load_config(self.path), self.path.read_text(encoding="utf-8")
+        self.legacy.write_text(text, encoding="utf-8")
+        result = migrate_config(self.settings, self.legacy)
+        return result, load_config(self.settings)
 
-    def test_every_earlier_version_becomes_current_and_valid(self):
+    def test_every_earlier_version_is_taken_over(self):
         for old in sorted(LEGACY.glob("*.toml")):
             with self.subTest(old.name):
-                result, cfg, text = self.migrate(old.read_text(encoding="utf-8"))
+                self.settings.unlink(missing_ok=True)
+                result, cfg = self.migrate(old.read_text(encoding="utf-8"))
                 self.assertTrue(result.changed)
-                self.assertEqual(tomllib.loads(text)["config_version"], CONFIG_VERSION)
-                self.assertNotEqual(cfg.general["backend"], "auto")
-                self.assertIn("# Ort: C:\\ProgramData\\VictusFan\\config.toml", text)   # neue Vorlage
-                self.assertEqual(self.path.with_name("config.toml.bak").read_text(encoding="utf-8"),
+                self.assertFalse(self.legacy.exists())
+                self.assertEqual(self.dir.joinpath("config.toml.bak").read_text(encoding="utf-8"),
                                  old.read_text(encoding="utf-8"))
+                self.assertEqual(cfg.general["backend"], "windows")
 
     def test_untested_old_template_values_are_not_taken_as_measurements(self):
         # Die erste Vorlage hatte max_level 55/57 und mode = "auto" - keine Messung.
-        result, cfg, _ = self.migrate((LEGACY / "v1.0.toml").read_text(encoding="utf-8"))
+        result, cfg = self.migrate((LEGACY / "v1.0.toml").read_text(encoding="utf-8"))
         self.assertEqual((cfg.windows["max_level_cpu"], cfg.windows["max_level_gpu"]), (54, 52))
         self.assertEqual(cfg.windows["mode"], "level")
         self.assertEqual(cfg.windows["hardware_test"], 0)
         self.assertFalse(result.hardware_tested)
 
     def test_real_user_file_keeps_measurements_and_sensor(self):
-        result, cfg, text = self.migrate((LEGACY / "user-2.7.toml").read_text(encoding="utf-8"))
+        result, cfg = self.migrate((LEGACY / "user-2.7.toml").read_text(encoding="utf-8"))
         self.assertTrue(result.hardware_tested)
         self.assertEqual(cfg.windows["hardware_test"], HARDWARE_TEST_VERSION)
         self.assertEqual(cfg.windows["cpu_sensor"], "perf:\\_TZ.THRM")
         self.assertEqual((cfg.windows["max_level_cpu"], cfg.windows["max_level_gpu"]), (54, 52))
-        self.assertIn("general.backend", result.dropped)
-        self.assertNotIn("Nach Änderungen den Dienst neu starten", text)
+        stored = json.loads(self.settings.read_text(encoding="utf-8"))
+        self.assertEqual(stored["windows"]["max_level_cpu"], 54)
 
-    def test_own_values_and_profiles_are_kept_invalid_ones_dropped(self):
-        result, cfg, _ = self.migrate(
-            '[general]\nprofile = "office"\ncritical_temp = 88\ninterval = 0\n'
+    def test_own_values_and_curves_kept_rest_dropped(self):
+        result, cfg = self.migrate(
+            '[general]\nprofile = "quiet"\ncritical_temp = 88\ninterval = 0\nlog_level = "DEBUG"\n'
             '[update]\ncheck_only = true\nrepo = "x/y"\nbranch = "main"\n'
+            '[windows]\nkeepalive = 90.0\n'
             '[profiles.office]\ncpu_curve = [[0, 0], [60, 0], [70, 40], [90, 100]]\n'
             '[profiles.balanced]\ncpu_curve = [[0, 25], [60, 40], [90, 100]]\n'
-            '[profiles.kaputt]\ncpu_curve = [[50, 10], [40, 20]]\n')
-        self.assertEqual(cfg.general["profile"], "office")
+            '[profiles.performance]\ncpu_curve = [[50, 10], [40, 20]]\n')
+        self.assertEqual(cfg.general["profile"], "quiet")
         self.assertEqual(cfg.general["critical_temp"], 88)
+        self.assertEqual(cfg.general["log_level"], "DEBUG")
         self.assertEqual(cfg.general["interval"], 2.0)                 # ungültig -> Standard
+        self.assertEqual(cfg.windows["keepalive"], 60.0)               # fest im Programm
         self.assertTrue(cfg.update["check_only"])
-        self.assertEqual(cfg.profile("office").cpu_curve[2], (70, 40))
         self.assertEqual(cfg.profile("balanced").cpu_curve[0], (0, 25))
-        self.assertNotIn("kaputt", cfg.raw["profiles"])
-        for name in ("update.repo", "update.branch", "Profil kaputt (ungültige Kurve)"):
+        self.assertEqual(cfg.raw["profiles"]["performance"], DEFAULT_PROFILES["performance"])
+        for name in ("update.repo", "update.branch", "eigenes Profil office", "Profil performance (ungültige Kurve)"):
             self.assertIn(name, result.dropped)
         self.assertTrue(any(d.startswith("general.interval") for d in result.dropped))
 
-    def test_unchanged_default_profiles_are_not_copied(self):
-        from victus_fan.config import DEFAULT_PROFILES
-        curve = DEFAULT_PROFILES["quiet"]
-        _, _, text = self.migrate(f'[profiles.quiet]\ncpu_curve = {curve["cpu_curve"]}\n'
-                                  f'gpu_curve = {curve["gpu_curve"]}\n')
-        self.assertNotIn("[profiles.quiet]", text)
+    def test_profile_choice_that_no_longer_exists(self):
+        result, cfg = self.migrate('[general]\nprofile = "office"\n[profiles.office]\ncpu_curve = [[0, 0], [90, 100]]\n'
+                                   '[windows]\nmax_level_cpu = 50  # vom Hardware-Test gesetzt\n')
+        self.assertEqual(cfg.general["profile"], "balanced")
+        self.assertEqual(cfg.windows["max_level_cpu"], 50)             # Messwert bleibt trotzdem
 
     def test_runs_only_once(self):
         self.migrate((LEGACY / "user-2.7.toml").read_text(encoding="utf-8"))
-        before = self.path.read_text(encoding="utf-8")
-        self.path.with_name("config.toml.bak").unlink()
-        result = migrate_config(self.path, TEMPLATE)
-        self.assertFalse(result.changed)
-        self.assertEqual(self.path.read_text(encoding="utf-8"), before)
-        self.assertFalse(self.path.with_name("config.toml.bak").exists())
+        before = self.settings.read_text(encoding="utf-8")
+        self.legacy.write_text('[general]\nprofile = "quiet"\n', encoding="utf-8")
+        self.assertFalse(migrate_config(self.settings, self.legacy).changed)
+        self.assertEqual(self.settings.read_text(encoding="utf-8"), before)
 
-    def test_unreadable_file_is_replaced_by_template_with_backup(self):
-        result, cfg, _ = self.migrate("das ist [kein toml")
+    def test_fresh_install_creates_defaults(self):
+        result = migrate_config(self.settings, self.legacy)
+        self.assertTrue(result.created)
+        self.assertEqual(json.loads(self.settings.read_text(encoding="utf-8")), {"version": 1})
+
+    def test_unreadable_file(self):
+        result, cfg = self.migrate("das ist [kein toml")
         self.assertTrue(result.changed)
         self.assertEqual(cfg.general["profile"], "balanced")
-        self.assertEqual(self.path.with_name("config.toml.bak").read_text(encoding="utf-8"), "das ist [kein toml")
-
-    def test_values_valid_alone_but_not_together(self):
-        # release >= engage ist nur zusammen ungültig -> Hardware-Werte bleiben trotzdem
-        result, cfg, _ = self.migrate('[toggle]\nengage_percent = 60.0\nrelease_percent = 70.0\n'
-                                      '[windows]\nmax_level_cpu = 50  # vom Hardware-Test gesetzt\n')
-        self.assertEqual(cfg.windows["max_level_cpu"], 50)
-        self.assertEqual(cfg.toggle["engage_percent"], 80.0)
-        self.assertTrue(any("passten nicht zusammen" in d for d in result.dropped))
-
-    def test_template_itself_is_current(self):
-        self.path.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
-        self.assertFalse(migrate_config(self.path, TEMPLATE).changed)
+        self.assertEqual(self.dir.joinpath("config.toml.bak").read_text(encoding="utf-8"), "das ist [kein toml")
 
 
 if __name__ == "__main__":

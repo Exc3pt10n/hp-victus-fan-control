@@ -27,7 +27,3 @@ version = {attr = "victus_fan.__version__"}
 
 [tool.setuptools]
 packages = ["victus_fan", "victus_fan.backends", "victus_fan.ui"]
-
-[tool.setuptools.package-data]
-# Vorlage der config.toml (Installer und Migration erzeugen die Datei daraus)
-victus_fan = ["config.example.toml"]

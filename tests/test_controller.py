@@ -1,9 +1,6 @@
 import unittest
 
-import tempfile
-from pathlib import Path
-
-from victus_fan.config import DEFAULTS, TEMPLATE as ROOT_TEMPLATE, Config, Profile, load_config
+from victus_fan.config import DEFAULTS, Config, Profile, config_from_values, load_config
 from victus_fan.controller import SAFETY_FLOOR, FanController, Reading, ToggleAdapter, interpolate
 
 
@@ -131,10 +128,10 @@ class ToggleTest(unittest.TestCase):
 
 
 class ConfigTest(unittest.TestCase):
-    def test_example_config_loads(self):
-        cfg = load_config(ROOT_TEMPLATE)
+    def test_defaults(self):
+        cfg = load_config(None)
         self.assertEqual(cfg.general["profile"], "balanced")
-        self.assertIn("quiet", cfg.raw["profiles"])
+        self.assertEqual(list(cfg.raw["profiles"]), ["quiet", "balanced", "performance"])
 
     def test_default_profiles_never_stop_fans_when_warm(self):
         cfg = Config()
@@ -144,34 +141,24 @@ class ConfigTest(unittest.TestCase):
                 self.assertGreater(interpolate(p.cpu_curve, t), 0, f"{name} bei {t} °C")
         self.assertEqual(interpolate(cfg.profile("balanced").cpu_curve, 30), 20)
 
-    def load(self, text):
-        with tempfile.TemporaryDirectory() as d:
-            path = Path(d) / "config.toml"
-            path.write_text(text, encoding="utf-8")
-            return load_config(path)
-
     def test_invalid_values_rejected(self):
-        for text in ("[general]\ninterval = 0", "[general]\ninterval = \"2\"",
-                     "[general]\ncritical_temp = 200", "[control]\nramp_down_rate = -1",
-                     "[windows]\nmax_level_cpu = 54.5", "[windows]\nmode = \"turbo\"",
-                     "[update]\nenabled = \"ja\"", "[toggle]\nrelease_percent = 90",
-                     "general = 5", "[profiles.x]\ncpu_curve = [[\"a\", 1]]"):
-            with self.subTest(text=text), self.assertRaises(ValueError):
-                self.load(text)
+        for values in ({"general": {"interval": 0}}, {"general": {"interval": "2"}},
+                       {"general": {"critical_temp": 200}}, {"control": {"ramp_down_rate": -1}},
+                       {"windows": {"max_level_cpu": 54.5}}, {"windows": {"mode": "turbo"}},
+                       {"update": {"enabled": "ja"}}, {"general": 5}, {"general": {"profile": "office"}},
+                       {"profiles": {"quiet": {"cpu_curve": [["a", 1]]}}}, []):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                config_from_values(values)
 
-    def test_valid_values_and_old_keys_accepted(self):
-        cfg = self.load('[general]\nlog_level = "debug"\ninterval = 1\n'
-                        '[update]\nrepo = "x/y"\nbranch = "main"\n')     # alte Schlüssel stören nicht
-        self.assertEqual(cfg.general["interval"], 1)
-
-    def test_configs_of_earlier_versions_still_load(self):
-        # Die config.toml bleibt bei Updates erhalten - auch alte Dateien müssen gelten.
-        folder = Path(__file__).resolve().parent / "legacy_configs"
-        files = sorted(folder.glob("*.toml"))
-        self.assertTrue(files)
-        for path in files:
-            with self.subTest(path.name):
-                load_config(path)
+    def test_fixed_and_unknown_values_are_ignored(self):
+        cfg = config_from_values({"general": {"backend": "simulate", "log_level": "DEBUG", "x": 1},
+                                  "windows": {"keepalive": 5}, "toggle": {"release_percent": 90},
+                                  "profiles": {"office": {"cpu_curve": [[0, 0], [90, 100]]}}})
+        self.assertEqual(cfg.general["backend"], "windows")       # nur per Befehlszeile
+        self.assertEqual(cfg.general["log_level"], "DEBUG")
+        self.assertEqual(cfg.windows["keepalive"], 60.0)
+        self.assertEqual(cfg.toggle["release_percent"], 55.0)
+        self.assertNotIn("office", cfg.raw["profiles"])
 
     def test_invalid_curve_rejected(self):
         cfg = Config()

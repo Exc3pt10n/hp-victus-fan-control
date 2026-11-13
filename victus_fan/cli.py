@@ -34,12 +34,12 @@ def _r(value):
 
 
 def load_config_or_defaults(path) -> tuple[Config, Exception | None]:
-    """Konfiguration laden; ist sie fehlerhaft, die Standardwerte (und den Fehler).
+    """Einstellungen laden; sind sie beschädigt, die Standardwerte (und den Fehler).
 
-    Dienst, Updater und "restore" dürfen an einer kaputten config.toml nie
+    Dienst, Updater und "restore" dürfen an beschädigten Einstellungen nie
     scheitern: Der Dienst regelt dann mit Standardwerten weiter (und übernimmt
-    die korrigierte Datei ohne Neustart), und vor allem muss der Updater eine
-    neue Version installieren können, die den Fehler vielleicht behebt.
+    neu gespeicherte Einstellungen ohne Neustart), und vor allem muss der Updater
+    eine neue Version installieren können, die den Fehler vielleicht behebt.
     """
     try:
         return load_config(path), None
@@ -48,10 +48,10 @@ def load_config_or_defaults(path) -> tuple[Config, Exception | None]:
 
 
 def _config(args) -> Config:
-    """Für Befehle von Hand: bei fehlerhafter Datei Standardwerte plus Hinweis."""
+    """Für Befehle von Hand: bei beschädigten Einstellungen Standardwerte plus Hinweis."""
     cfg, error = load_config_or_defaults(args.config)
     if error is not None:
-        print(f"Hinweis: Konfiguration fehlerhaft ({error}) - nutze Standardwerte")
+        print(f"Hinweis: Einstellungen beschädigt ({error}) - nutze Standardwerte")
     return cfg
 
 
@@ -62,12 +62,13 @@ def cmd_run(args) -> int:
     log_file = Path(args.log_file) if args.log_file else paths.LOG_FILE
     _setup_logging("DEBUG" if args.verbose else cfg.general["log_level"], log_file)
     if error is not None:
-        logging.getLogger(__name__).error("Konfiguration fehlerhaft (%s) - nutze Standardwerte", error)
+        logging.getLogger(__name__).error("Einstellungen beschädigt (%s) - nutze Standardwerte", error)
     backend = create_backend(args.backend or cfg.general["backend"], cfg)
     service = FanService(cfg, backend, status_file=paths.STATUS_FILE,
                          override_file=paths.OVERRIDE_FILE, dry_run=args.dry_run)
     if error is not None:
-        service.config_error = f"{error} – es gelten die Standardwerte."
+        service.config_error = (f"{error} – es gelten die Standardwerte. Im Einstellungsfenster "
+                                "speichern oder zurücksetzen.")
     service.install_signal_handlers()
     service.run(verbose=args.verbose)
     return 0
@@ -117,7 +118,7 @@ def cmd_mode(args) -> int:
     try:
         write_override(mode=args.name)
     except OSError as exc:
-        print(f"Konfiguration nicht schreibbar: {exc}")
+        print(f"Einstellung nicht schreibbar: {exc}")
         return 1
     print({"normal": "Lüftersteuerung an - die Lüfter folgen dem gewählten Profil.",
            "max": "Lüfter laufen auf voller Drehzahl (zurück mit: victus-fan mode normal).",
@@ -208,10 +209,10 @@ def cmd_selftest(args) -> int:
             print(f"\nEinstellungen in {args.config} gespeichert: {rec}")
             print("Der Dienst übernimmt sie automatisch innerhalb weniger Sekunden.")
         except Exception as exc:  # noqa: BLE001
-            print(f"\nKonnte die Konfiguration nicht speichern: {exc}")
+            print(f"\nKonnte die Einstellungen nicht speichern: {exc}")
             return finish(1)
     elif rec.get("mode"):
-        print(f"\nEmpfohlen für [windows] in der config.toml: {rec}  (automatisch mit --apply)")
+        print(f"\nEmpfohlene Einstellungen: {rec}  (übernehmen mit --apply)")
     return finish(0 if rec.get("mode") else 2)
 
 
@@ -230,7 +231,7 @@ def cmd_update(args) -> int:
               else "Updates: nur freigegebene Versionen.")
     cfg, error = load_config_or_defaults(args.config)
     if error is not None:
-        logging.getLogger(__name__).warning("Konfiguration fehlerhaft (%s) - nutze Standardwerte", error)
+        logging.getLogger(__name__).warning("Einstellungen beschädigt (%s) - nutze Standardwerte", error)
     if args.auto and not cfg.update.get("enabled", True):
         logging.getLogger(__name__).info("Auto-Update ist deaktiviert ([update] enabled = false)")
         return 0
@@ -284,7 +285,7 @@ def cmd_sensors(args) -> int:
             save_settings(args.config, {"windows": {"cpu_sensor": best["id"]}})
             print(f"\nIn {args.config} als CPU-Quelle gespeichert - der Dienst übernimmt sie sofort.")
         except (OSError, ValueError) as exc:
-            print(f"\nKonnte die Konfiguration nicht speichern: {exc}")
+            print(f"\nKonnte die Einstellungen nicht speichern: {exc}")
             return finish(1)
     elif best:
         print("Übernehmen mit: victus-fan sensors --apply")
@@ -295,9 +296,9 @@ def cmd_migrate_config(args) -> int:
     from .migrate import migrate_config
 
     try:
-        result = migrate_config(args.config, args.template)
+        result = migrate_config(args.config, args.legacy)
     except Exception as exc:  # noqa: BLE001 - Installer soll weiterlaufen, alte Datei bleibt
-        print(f"Konfiguration nicht aktualisiert: {exc}")
+        print(f"Alte Konfiguration nicht übernommen: {exc}")
         return 1
     print(result.summary())
     return 0
@@ -327,7 +328,8 @@ def main(argv: list[str] | None = None) -> int:
     _utf8_console()
     parser = argparse.ArgumentParser(prog="victus-fan", description="Intelligente Lüftersteuerung für HP Victus")
     parser.add_argument("--version", action="version", version=__version__)
-    parser.add_argument("-c", "--config", default=str(paths.CONFIG_FILE), help="Pfad zur config.toml")
+    parser.add_argument("-c", "--config", default=str(paths.SETTINGS_FILE),
+                        help="Pfad zur settings.json (Einstellungen; geändert wird im Fenster)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("run", help="Steuerung starten (Vordergrund; der Dienst nutzt das auch)")
@@ -364,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("selftest", help="Hardware-Test: prüfen, welche Lüfterbefehle wirklich wirken")
     p.add_argument("--backend", choices=BACKENDS)
-    p.add_argument("--apply", action="store_true", help="Ergebnis in die config.toml übernehmen")
+    p.add_argument("--apply", action="store_true", help="Ergebnis in die Einstellungen übernehmen")
     p.add_argument("--settle", type=float, default=15.0, help="Wartezeit je Schritt in Sekunden")
     p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
     p.set_defaults(func=cmd_selftest)
@@ -384,8 +386,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--wait", action="store_true", help="am Ende auf Enter warten")
     p.set_defaults(func=cmd_sensors)
 
-    p = sub.add_parser("migrate-config", help="config.toml auf den aktuellen Aufbau bringen (Installer)")
-    p.add_argument("--template", help="andere Vorlage als die mitgelieferte (nur für Tests)")
+    p = sub.add_parser("migrate-config", help="alte config.toml einmalig übernehmen bzw. Einstellungen anlegen (Installer)")
+    p.add_argument("--legacy", default=str(paths.LEGACY_CONFIG_FILE), help="Pfad zur alten config.toml")
     p.set_defaults(func=cmd_migrate_config)
 
     p = sub.add_parser("curve", help="Lüfterkurve eines Profils anzeigen")

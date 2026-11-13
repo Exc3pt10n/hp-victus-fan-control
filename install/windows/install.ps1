@@ -6,7 +6,8 @@
 .DESCRIPTION
     - prüft/installiert Python 3.11+
     - legt eine eigene Python-Umgebung unter "C:\Program Files\VictusFan" an
-    - kopiert die Konfiguration nach C:\ProgramData\VictusFan (bestehende bleibt)
+    - Einstellungen in C:\ProgramData\VictusFan\settings.json (bestehende bleiben;
+      eine config.toml älterer Versionen wird einmalig übernommen)
     - geplante Aufgabe "VictusFanControl": Lüftersteuerung, startet mit Windows,
       läuft unsichtbar als SYSTEM, startet sich bei Absturz neu
     - geplante Aufgabe "VictusFanUpdate": sucht beim Start und alle 6 Stunden
@@ -210,29 +211,28 @@ try {
         Write-Warning "tkinter fehlt - das Fenster der Oberfläche wird nicht funktionieren. Python von python.org mit 'tcl/tk and IDLE' installieren."
     }
 
-    # --- Konfiguration ----------------------------------------------------
-    Step "Konfiguration in $DataDir"
+    # --- Einstellungen ----------------------------------------------------
+    Step "Einstellungen in $DataDir"
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
     # Ordnerrechte ausdrücklich setzen (statt von ProgramData zu erben, wo Benutzer
     # eigene Dateien anlegen dürfen): SYSTEM und Administratoren voll, Benutzer
-    # nur lesen. Schreiben dürfen sie nur override.json und config.toml (unten).
+    # nur lesen. Schreiben dürfen sie nur override.json und settings.json (unten).
     if ((Invoke-Native "icacls.exe" @($DataDir, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F",
             "*S-1-5-32-544:(OI)(CI)F", "${UsersSid}:(OI)(CI)RX") -Quiet) -ne 0) {
         Write-Warning "Ordnerrechte für $DataDir konnten nicht gesetzt werden"
     }
-    $configFile = Join-Path $DataDir "config.toml"
-    # Anlegen bzw. ältere Dateien auf den aktuellen Aufbau bringen: eigene Werte
-    # bleiben, veraltete Einträge fallen weg, die alte Datei wird als
-    # config.toml.bak gesichert. Die Vorlage liegt im installierten Paket.
-    if ((Invoke-Native $venvPython @("-m", "victus_fan", "--config", $configFile, "migrate-config")) -ne 0) {
-        if (-not (Test-Path $configFile)) { throw "config.toml konnte nicht angelegt werden" }
-        Write-Warning "Konfiguration konnte nicht aktualisiert werden - die bisherige bleibt unverändert"
+    $settingsFile = Join-Path $DataDir "settings.json"
+    # Anlegen bzw. eine config.toml älterer Versionen einmalig übernehmen (eigene Werte
+    # und Messwerte bleiben, die alte Datei wird als config.toml.bak aufgehoben).
+    if ((Invoke-Native $venvPython @("-m", "victus_fan", "--config", $settingsFile, "migrate-config")) -ne 0) {
+        Write-Warning "Alte Konfiguration konnte nicht übernommen werden - es gelten die Standardwerte"
     }
-    # Normale Benutzer dürfen Profil/Modus umschalten und die Konfiguration bearbeiten.
+    # Normale Benutzer dürfen Lüfter/Steuerung umschalten und die Einstellungen ändern.
     $override = Join-Path $DataDir "override.json"
     if (-not (Test-Path $override)) { Set-Content -Path $override -Value '{"profile": "auto", "mode": "normal"}' -Encoding UTF8 }
+    if (-not (Test-Path $settingsFile)) { Set-Content -Path $settingsFile -Value '{"version": 1}' -Encoding UTF8 }
     $null = Invoke-Native "icacls.exe" @($override, "/grant", "${UsersSid}:(M)") -Quiet
-    $null = Invoke-Native "icacls.exe" @($configFile, "/grant", "${UsersSid}:(M)") -Quiet
+    $null = Invoke-Native "icacls.exe" @($settingsFile, "/grant", "${UsersSid}:(M)") -Quiet
 
     # --- Befehl "victus-fan" bereitstellen -------------------------------
     $binDir = Join-Path $InstallDir "bin"
@@ -371,7 +371,7 @@ Write-Host "Das Tray-Icon (unten rechts, ggf. unter '^') zeigt die höchste Temp
 Write-Host "Klick darauf öffnet das Fenster, Rechtsklick das Menü."
 Write-Host "Updates werden automatisch installiert (beim Start und alle 6 Stunden)."
 Write-Host "Befehle (neue Konsole):  victus-fan status | victus-fan profile quiet|balanced|performance|auto"
-Write-Host "Konfiguration:           $configFile"
+Write-Host "Einstellungen:           im Fenster unter Extras > Einstellungen"
 Write-Host "Log:                     $(Join-Path $DataDir 'victus-fan.log')"
 Write-Host ""
 Read-Host "Enter zum Schließen"

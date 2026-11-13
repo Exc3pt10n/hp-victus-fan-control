@@ -1,9 +1,15 @@
-"""Konfiguration: Standardwerte + Laden aus einer TOML-Datei."""
+"""Einstellungen: Standardwerte, feste Werte und die gespeicherten Einstellungen.
+
+Gespeichert wird in ``settings.json`` (Datenordner). Die Datei ist kein
+Bearbeitungsformat: geändert wird nur über das Einstellungsfenster bzw. vom
+Hardware- und Sensor-Test. Sie enthält nur Werte, die vom Standard abweichen;
+jeder Wert wird vor dem Speichern und beim Laden geprüft.
+"""
 
 from __future__ import annotations
 
 import copy
-import tomllib
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,8 +44,9 @@ DEFAULTS: dict = {
         "interval": 2.0,
         # Ab dieser (ungeglätteten) Temperatur sofort Maximaldrehzahl.
         "critical_temp": 92.0,
-        # Backend: "windows" oder "simulate" (Test ohne Hardware).
+        # Backend: "windows" oder "simulate" (nur per Befehlszeile, siehe FIXED).
         "backend": "windows",
+        # "DEBUG" = ausführliches Protokoll (Schalter im Einstellungsfenster).
         "log_level": "INFO",
     },
     "control": {
@@ -104,15 +111,15 @@ DEFAULTS: dict = {
 
 
 # --------------------------------------------------------------------------
-# Prüfung: Die config.toml dürfen normale Benutzer bearbeiten (Einstellungs-
+# Prüfung: Die settings.json dürfen normale Benutzer schreiben (Einstellungs-
 # fenster), der Dienst läuft aber als SYSTEM und steuert die Hardware. Deshalb
 # wird jeder Wert auf Typ und Wertebereich geprüft; Unsinn wie interval = 0 oder
 # critical_temp = 200 wird abgelehnt statt übernommen.
 # --------------------------------------------------------------------------
 # Höchste erlaubte Notfall-Temperatur - fest, nicht konfigurierbar höher.
 MAX_CRITICAL_TEMP = 95.0
-# Aufbau der config.toml. Bei jeder Änderung erhöhen und migrate.py ergänzen.
-CONFIG_VERSION = 3
+# Aufbau der settings.json. Bei jeder Änderung erhöhen und die Übernahme ergänzen.
+SETTINGS_VERSION = 1
 # Messverfahren des Hardware-Tests. Erhöhen, wenn alte Messwerte nicht mehr
 # passen - dann bittet das Fenster einmal um einen neuen Test.
 HARDWARE_TEST_VERSION = 1
@@ -141,9 +148,6 @@ STRINGS = {("general", "profile"), ("general", "battery_profile"), ("windows", "
 
 def validate(raw: dict) -> None:
     """Prüft alle bekannten Werte; wirft ValueError mit verständlicher Meldung."""
-    version = raw.get("config_version", 0)
-    if isinstance(version, bool) or not isinstance(version, int):
-        raise ValueError("config_version: ganze Zahl erwartet")
     for section in ("general", "control", "windows", "update", "toggle", "profiles"):
         if not isinstance(raw.get(section), dict):
             raise ValueError(f"[{section}] muss eine Sektion sein")
@@ -178,14 +182,16 @@ def validate(raw: dict) -> None:
             raise ValueError(f"Profil '{name}': cpu_curve fehlt")
 
 
-def _merge(base: dict, override: dict) -> dict:
-    out = copy.deepcopy(base)
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = _merge(out[key], value)
-        else:
-            out[key] = value
-    return out
+# --------------------------------------------------------------------------
+# Feste Werte: am Gerät gemessen bzw. technisch bedingt - nicht einstellbar.
+# --------------------------------------------------------------------------
+FIXED = {("general", "backend"), ("windows", "keepalive"), ("windows", "mode_keepalive"),
+         ("toggle", "engage_percent"), ("toggle", "release_percent"), ("toggle", "min_on_time")}
+SECTIONS = ("general", "control", "windows", "update", "toggle")
+STORABLE = {s: [k for k in DEFAULTS[s] if (s, k) not in FIXED] for s in SECTIONS}
+PROFILE_NAMES = tuple(DEFAULT_PROFILES)
+# Messwerte von Hardware- und Sensor-Test
+MEASURED = ("mode", "fan_mode", "min_level", "max_level_cpu", "max_level_gpu", "hardware_test", "cpu_sensor")
 
 
 @dataclass
@@ -248,189 +254,123 @@ def _validate_curve(points, label: str) -> list[tuple[float, float]]:
     return curve
 
 
-def load_config(path: str | Path | None) -> Config:
-    if path is None:
-        return Config()
-    path = Path(path)
-    if not path.exists():
-        return Config(path=path)
-    with path.open("rb") as fh:
-        user = tomllib.load(fh)
-    return config_from_dict(user, path)
-
-
-# --------------------------------------------------------------------------
-# Schreiben: Die Datei wird immer komplett aus der Vorlage erzeugt - gleicher
-# Aufbau, gleiche Reihenfolge, ausgerichtete Kommentare. Egal ob das
-# Einstellungsfenster, der Hardware-/Sensor-Test oder ein Update schreibt.
-# --------------------------------------------------------------------------
-TEMPLATE = Path(__file__).with_name("config.example.toml")
-COMMENT_COLUMN = 30
-SECTIONS = ("general", "control", "windows", "update", "toggle")
-
-
-def _toml_value(value) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (int, float)):
-        return str(value)
-    if isinstance(value, (list, tuple)):
-        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
-    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def _comment_start(line: str) -> int | None:
-    """Spalte des Kommentars (#) einer TOML-Zeile - ein # in einem String zählt nicht."""
-    quote = None
-    i = 0
-    while i < len(line):
-        c = line[i]
-        if quote:
-            if c == "\\" and quote == '"':
-                i += 1                      # Escape überspringen
-            elif c == quote:
-                quote = None
-        elif c in "\"'":
-            quote = c
-        elif c == "#":
-            return i
-        i += 1
-    return None
-
-
-def _line(key: str, value, comment: str = "") -> str:
-    text = f"{key} = {_toml_value(value)}"
-    return f"{text.ljust(COMMENT_COLUMN - 1)} {comment}" if comment else text
-
-
-def render_config(user: dict, template: str | None = None) -> str:
-    """Formatierte config.toml: Vorlage mit den Werten aus ``user`` (geladenes TOML).
-
-    Jeder Eintrag der Vorlage bekommt den Wert des Benutzers bzw. den Standard,
-    weitere bekannte Einträge mit eigenem Wert werden in ihrer Sektion ergänzt,
-    eigene bzw. geänderte Profile folgen am Ende. Unbekannte Einträge entfallen.
-    """
-    if template is None:
-        template = TEMPLATE.read_text(encoding="utf-8-sig")
-
-    def value(section, key):
-        given = user.get(section) if isinstance(user.get(section), dict) else {}
-        return given.get(key, DEFAULTS[section][key])
-
-    out: list[str] = []
-    section = None
-    written: set[str] = set()
-
-    def finish_section():
-        # Bekannte Einträge, die in der Vorlage fehlen, aber vom Standard abweichen
-        if section in SECTIONS:
-            extra = [_line(k, value(section, k)) for k in DEFAULTS[section]
-                     if k not in written and value(section, k) != DEFAULTS[section][k]]
-            while out and not out[-1].strip():
-                out.pop()
-            out.extend(extra)
-            out.append("")
-
-    for raw in template.splitlines():
-        stripped = raw.strip()
-        if stripped.startswith("["):
-            finish_section()
-            section = stripped.split("]")[0].lstrip("[").strip()
-            written = set()
-            out.append(raw)
+def config_from_values(values: dict, path: Path | None = None) -> Config:
+    """Gespeicherte Werte (nur Abweichungen) mit den Standardwerten zusammenführen
+    und vollständig prüfen. Unbekannte und feste Einträge werden ignoriert.
+    Wirft ValueError bei ungültigen Werten."""
+    if not isinstance(values, dict):
+        raise ValueError("Einstellungen: unerwartetes Format")
+    raw = copy.deepcopy(DEFAULTS)
+    for section, keys in STORABLE.items():
+        given = values.get(section)
+        if given is None:
             continue
-        col = _comment_start(raw)
-        code = (raw if col is None else raw[:col]).strip()
-        if "=" in code and not stripped.startswith("#"):
-            key = code.split("=")[0].strip()
-            comment = raw[col:].strip() if col is not None else ""
-            if section is None and key == "config_version":
-                out.append(_line(key, CONFIG_VERSION, comment))
-                continue
-            if section in SECTIONS and key in DEFAULTS[section]:
-                out.append(_line(key, value(section, key), comment))
-                written.add(key)
-                continue
-        out.append(raw.rstrip())
-    finish_section()
-
-    profiles = user.get("profiles") if isinstance(user.get("profiles"), dict) else {}
-    for name, profile in profiles.items():
-        if not isinstance(profile, dict):
-            continue
-        curves = {k: profile[k] for k in ("cpu_curve", "gpu_curve") if k in profile}
-        default = DEFAULT_PROFILES.get(name)
-        if default and all(curves.get(k) == default[k] for k in ("cpu_curve", "gpu_curve")):
-            continue                        # unverändertes Standardprofil: steht im Programm
-        out.append(f"[profiles.{name}]")
-        out.extend(_line(k, v) for k, v in curves.items())
-        out.append("")
-    while out and not out[-1].strip():
-        out.pop()
-    return "\n".join(out) + "\n"
-
-
-def config_from_dict(user: dict, path: Path | None = None) -> Config:
-    """Konfiguration aus geladenem TOML bilden und vollständig prüfen."""
-    cfg = Config(raw=_merge(DEFAULTS, user), path=path)
-    validate(cfg.raw)
-    for name in cfg.raw["profiles"]:
-        cfg.profile(name)
-    for key in ("profile", "battery_profile"):
-        cfg.profile(cfg.general[key])
-    return cfg
-
-
-def write_config(path: str | Path, user: dict) -> Config:
-    """``user`` prüfen, formatiert schreiben und die Konfiguration zurückgeben.
-    Wirft ValueError, ohne die Datei anzufassen, wenn etwas ungültig ist."""
-    path = Path(path)
-    text = render_config(user)
+        if not isinstance(given, dict):
+            raise ValueError(f"Einstellungen: [{section}] hat ein unerwartetes Format")
+        raw[section].update({k: v for k, v in given.items() if k in keys})
+    profiles = values.get("profiles") or {}
+    if not isinstance(profiles, dict):
+        raise ValueError("Einstellungen: Profile haben ein unerwartetes Format")
+    for name in PROFILE_NAMES:
+        given = profiles.get(name)
+        if isinstance(given, dict) and "cpu_curve" in given:
+            raw["profiles"][name] = {"cpu_curve": given["cpu_curve"],
+                                     "gpu_curve": given.get("gpu_curve", given["cpu_curve"])}
+    validate(raw)
+    cfg = Config(raw=raw, path=path)
     try:
-        cfg = config_from_dict(tomllib.loads(text), path)
-    except (ValueError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
-        raise ValueError(f"Ungültige Einstellung: {exc}") from exc
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Direkt schreiben (nicht ersetzen), damit die Dateirechte für Benutzer erhalten bleiben.
-    path.write_text(text, encoding="utf-8")
+        for name in raw["profiles"]:
+            cfg.profile(name)
+        for key in ("profile", "battery_profile"):
+            cfg.profile(cfg.general[key])
+    except KeyError as exc:
+        raise ValueError(str(exc).strip("'\"")) from None
     return cfg
 
 
-def read_user_values(path: str | Path) -> dict:
-    """Die in der Datei stehenden Werte (ohne Standardwerte); {} wenn sie fehlt."""
+def stored_values(cfg: Config) -> dict:
+    """Was gespeichert wird: Abweichungen vom Standard, Messwerte vollständig."""
+    out: dict = {"version": SETTINGS_VERSION}
+    for section, keys in STORABLE.items():
+        tested = section == "windows" and cfg.windows["hardware_test"] >= 1
+        values = {k: cfg.raw[section][k] for k in keys
+                  if cfg.raw[section][k] != DEFAULTS[section][k] or (tested and k in MEASURED)}
+        if values:
+            out[section] = values
+    profiles = {name: {"cpu_curve": [list(p) for p in cfg.raw["profiles"][name]["cpu_curve"]],
+                       "gpu_curve": [list(p) for p in cfg.raw["profiles"][name]["gpu_curve"]]}
+                for name in PROFILE_NAMES
+                if cfg.raw["profiles"][name] != DEFAULT_PROFILES[name]}
+    if profiles:
+        out["profiles"] = profiles
+    return out
+
+
+def read_values(path: str | Path) -> dict:
+    """Gespeicherte Werte lesen ({} wenn die Datei fehlt); ValueError wenn unlesbar."""
     path = Path(path)
     if not path.exists():
         return {}
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8-sig"))
-    except tomllib.TOMLDecodeError as exc:
-        raise ValueError(f"Die Konfiguration ist nicht lesbar ({exc}) - bitte als Textdatei korrigieren") from exc
+        data = json.loads(path.read_text(encoding="utf-8-sig") or "{}")
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Einstellungen nicht lesbar ({exc})") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Einstellungen: unerwartetes Format")
+    return data
+
+
+def load_config(path: str | Path | None) -> Config:
+    """Einstellungen laden; fehlt die Datei, gelten die Standardwerte.
+    Wirft ValueError, wenn sie unlesbar oder ungültig ist."""
+    if path is None:
+        return Config()
+    path = Path(path)
+    return config_from_values(read_values(path), path)
+
+
+def write_config(path: str | Path, cfg: Config) -> Config:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(stored_values(cfg), indent=2, ensure_ascii=False) + "\n"
+    # Direkt schreiben (nicht ersetzen), damit die Dateirechte für Benutzer erhalten bleiben.
+    path.write_text(text, encoding="utf-8")
+    cfg.path = path
+    return cfg
 
 
 def save_settings(path: str | Path, changes: dict[str, dict]) -> Config:
-    """Einzelne Werte ändern (Einstellungsfenster, Hardware- und Sensor-Test).
+    """Werte ändern (Einstellungsfenster, Hardware- und Sensor-Test).
 
     ``changes`` = {"general": {...}, "profiles.quiet": {"cpu_curve": ...}, ...}.
-    Geschrieben wird die ganze Datei formatiert neu; ist das Ergebnis ungültig,
-    bleibt sie unverändert und es gibt einen ValueError.
+    Ist das Ergebnis ungültig, bleibt die Datei unverändert (ValueError). Sind
+    die gespeicherten Einstellungen beschädigt, wird von den Standardwerten
+    ausgegangen - Speichern repariert sie so.
     """
-    user = read_user_values(path)
-    version = user.get("config_version", 0)
-    if user and (not isinstance(version, int) or isinstance(version, bool) or version < CONFIG_VERSION):
-        # Datei im alten Format (Migration beim Update fehlgeschlagen o. Ä.): erst
-        # umstellen, sonst gingen z. B. die Vermerke des Hardware-Tests verloren.
-        from .migrate import migrate_config
-        migrate_config(path)
-        user = read_user_values(path)
-    user = copy.deepcopy(user)
-    for section, values in changes.items():
-        if not values:
+    try:
+        values = copy.deepcopy(read_values(path))
+        config_from_values(values)
+    except ValueError:
+        values = {}
+    for section, changed in changes.items():
+        if not changed:
             continue
         if section.startswith("profiles."):
-            target = user.setdefault("profiles", {}).setdefault(section.split(".", 1)[1], {})
+            values.setdefault("profiles", {}).setdefault(section.split(".", 1)[1], {}).update(changed)
         else:
-            target = user.setdefault(section, {})
-            if not isinstance(target, dict):
-                target = user[section] = {}
-        target.update(values)
-    return write_config(path, user)
+            values.setdefault(section, {}).update(changed)
+    try:
+        cfg = config_from_values(values, Path(path))
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Ungültige Einstellung: {exc}") from exc
+    return write_config(path, cfg)
+
+
+def reset_settings(path: str | Path) -> Config:
+    """Alles auf Standard - nur die Messwerte von Hardware- und Sensor-Test bleiben."""
+    try:
+        measured = {k: v for k, v in load_config(path).windows.items() if k in MEASURED}
+    except ValueError:
+        measured = {}
+    cfg = config_from_values({"windows": measured} if measured else {})
+    return write_config(path, cfg)

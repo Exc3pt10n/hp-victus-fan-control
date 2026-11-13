@@ -7,14 +7,14 @@ from victus_fan import cli, updater
 
 
 class BrokenConfigTest(unittest.TestCase):
-    """Eine fehlerhafte config.toml darf Updater und Wiederherstellung nie blockieren -
+    """Beschädigte Einstellungen dürfen Updater und Wiederherstellung nie blockieren -
     sonst kann nicht einmal die Version installiert werden, die den Fehler behebt."""
 
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.config = Path(tmp.name) / "config.toml"
-        self.config.write_text('[general]\nbackend = "kaputt"\ninterval = 0\n', encoding="utf-8")
+        self.config = Path(tmp.name) / "settings.json"
+        self.config.write_text('{"general": {"interval": 0}}', encoding="utf-8")
 
     def test_update_still_runs(self):
         with mock.patch.object(updater, "setup_logging"), \

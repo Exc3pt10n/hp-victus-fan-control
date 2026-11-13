@@ -100,21 +100,21 @@ class ServiceTest(unittest.TestCase):
     def test_config_reload(self):
         import os
         with tempfile.TemporaryDirectory() as d:
-            cfg_path = Path(d) / "config.toml"
-            cfg_path.write_text("[general]\ncritical_temp = 92.0\n")
+            cfg_path = Path(d) / "settings.json"
+            cfg_path.write_text('{"general": {"critical_temp": 92.0}}')
             s = FanService(load_config(cfg_path), FakeBackend())
-            cfg_path.write_text("[general]\ncritical_temp = 80.0\n")
+            cfg_path.write_text('{"general": {"critical_temp": 80.0}}')
             os.utime(cfg_path, (1, 1))
             s.step()
             self.assertEqual(s.controller.critical_temp, 80.0)
-            cfg_path.write_text("[general]\nprofile = 'gibtsnicht'\n")
+            cfg_path.write_text('{"general": {"profile": "gibtsnicht"}}')
             os.utime(cfg_path, (2, 2))
-            status = s.step()  # fehlerhafte Konfiguration -> alte bleibt, Hinweis im Status
+            status = s.step()  # beschädigte Einstellungen -> bisherige bleiben, Hinweis im Status
             self.assertEqual(s.controller.critical_temp, 80.0)
             self.assertIn("gibtsnicht", status["config_error"])
-            cfg_path.write_text("[general]\ncritical_temp = 85.0\n")
+            cfg_path.write_text('{"general": {"critical_temp": 85.0}}')
             os.utime(cfg_path, (3, 3))
-            status = s.step()  # korrigiert -> übernommen, Hinweis weg
+            status = s.step()  # neu gespeichert -> übernommen, Hinweis weg
             self.assertEqual(s.controller.critical_temp, 85.0)
             self.assertIsNone(status["config_error"])
 
