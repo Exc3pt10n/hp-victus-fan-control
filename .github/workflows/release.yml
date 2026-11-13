@@ -43,7 +43,7 @@ jobs:
           python -m pip install --quiet --disable-pip-version-check pywin32 pystray Pillow
           python -m unittest -v
 
-      - name: PowerShell-Skripte prüfen
+      - name: PowerShell-Skripte pruefen
         shell: powershell
         run: |
           $failed = $false
@@ -79,8 +79,8 @@ jobs:
           Check ($LASTEXITCODE -in 0, $null) "Installer beendet"
           $py = Join-Path $dir "venv\Scripts\python.exe"
           & $py -c "import victus_fan, victus_fan.cli, victus_fan.service, victus_fan.updater, victus_fan.backends.gpu_power, win32com.client, pystray, PIL; print(victus_fan.__version__)"
-          Check ($LASTEXITCODE -eq 0) "Python-Umgebung vollständig"
-          Check (Test-Path (Join-Path $dir "wheels\victus_fan-*.whl")) "Pakete für Wiederherstellung aufgehoben"
+          Check ($LASTEXITCODE -eq 0) "Python-Umgebung vollstaendig"
+          Check (Test-Path (Join-Path $dir "wheels\victus_fan-*.whl")) "Pakete fuer Wiederherstellung aufgehoben"
           Check (Get-ScheduledTask -TaskName VictusFanControl -ErrorAction SilentlyContinue) "Aufgabe VictusFanControl"
           Check (Get-ScheduledTask -TaskName VictusFanUpdate -ErrorAction SilentlyContinue) "Aufgabe VictusFanUpdate"
           Check (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VictusFanControl") "Eintrag in der App-Liste"
@@ -88,7 +88,7 @@ jobs:
           Check ($info.version -match '^\d+\.\d+\.\d+$') "installed.json mit Version $($info.version)"
           $acl = (Get-Acl $data).Access
           Check (-not ($acl | Where-Object { $_.IdentityReference -like "*Users*" -or $_.IdentityReference -like "*Benutzer*" } |
-                 Where-Object { $_.FileSystemRights -match "Write|Modify|FullControl|CreateFiles" })) "Benutzer dürfen im Datenordner nichts anlegen"
+                 Where-Object { $_.FileSystemRights -match "Write|Modify|FullControl|CreateFiles" })) "Benutzer duerfen im Datenordner nichts anlegen"
           & icacls (Join-Path $data "config.toml")
 
           Write-Host "=== Update (wie der Auto-Updater) ==="
@@ -97,13 +97,16 @@ jobs:
           $info = Get-Content (Join-Path $dir "installed.json") -Raw | ConvertFrom-Json
           Check ($info.sha -eq "ci-test" -and $info.source -eq "auto-update") "installed.json aktualisiert"
           & $py -m victus_fan update --check
-          Write-Host "(Update-Prüfung: Exit-Code $LASTEXITCODE)"
+          Write-Host "(Update-Pruefung: Exit-Code $LASTEXITCODE)"
 
           Write-Host "=== Deinstallation ==="
           & .\install\windows\uninstall.ps1 -Quiet
           Check (-not (Test-Path $dir)) "Programmordner entfernt"
           Check (-not (Get-ScheduledTask -TaskName VictusFanControl -ErrorAction SilentlyContinue)) "Aufgaben entfernt"
           Check (-not (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VictusFanControl")) "App-Eintrag entfernt"
+          # Der letzte Programmaufruf (Luefter ans BIOS zurueckgeben) scheitert hier
+          # mangels HP-Hardware - entscheidend sind nur die Pruefungen oben.
+          exit 0
 
   tag:
     needs: [test, windows]
