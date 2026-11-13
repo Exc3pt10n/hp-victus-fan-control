@@ -3,18 +3,23 @@ import tomllib
 import unittest
 from pathlib import Path
 
+import victus_fan
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
 class VersionTest(unittest.TestCase):
-    """Der Release-Workflow taggt v<Version> - beide Angaben müssen übereinstimmen."""
+    """Die Version steht nur in victus_fan/__init__.py; pyproject.toml liest sie von dort."""
 
-    def test_versions_match(self):
+    def test_single_source(self):
         with (ROOT / "pyproject.toml").open("rb") as fh:
-            project = tomllib.load(fh)["project"]["version"]
+            data = tomllib.load(fh)
+        self.assertNotIn("version", data["project"])
+        self.assertIn("version", data["project"]["dynamic"])
+        self.assertEqual(data["tool"]["setuptools"]["dynamic"]["version"], {"attr": "victus_fan.__version__"})
+        self.assertRegex(victus_fan.__version__, r"^\d+\.\d+\.\d+$")
         code = re.search(r'__version__ = "(.+?)"', (ROOT / "victus_fan" / "__init__.py").read_text()).group(1)
-        self.assertEqual(project, code)
-        self.assertRegex(project, r"^\d+\.\d+\.\d+$")
+        self.assertEqual(code, victus_fan.__version__)   # so liest es auch der Release-Workflow
 
 
 if __name__ == "__main__":

@@ -63,9 +63,10 @@ DEFAULTS: dict = {
         # "level" = stufenlose Drehzahl, "toggle" = nur Max an/aus (Notlösung,
         # falls ein BIOS feste Drehzahlen ignoriert).
         "mode": "level",
-        # BIOS-Leistungsmodus, der beim Start gesetzt wird: "default", "cool"
-        # oder "performance". Das BIOS setzt feste Drehzahlen erst um, nachdem
-        # ein Leistungsmodus gesetzt wurde - "default" ändert die Leistung nicht.
+        # BIOS-Modus, der beim Start gesetzt wird: "default", "cool" oder
+        # "performance". Das BIOS setzt feste Drehzahlen erst um, nachdem ein
+        # Modus gesetzt wurde. "default" genügt; die anderen bringen auf dem
+        # Victus keine messbare Mehrleistung.
         "fan_mode": "default",
         # Quelle der CPU-Temperatur: "auto" (HP-BIOS, sonst wärmste ACPI-Zone)
         # oder eine id aus "victus-fan sensors", z. B. "perf:\\_TZ.THRM".
@@ -78,7 +79,7 @@ DEFAULTS: dict = {
         # Das BIOS fällt nach ca. 120 s ohne Befehl in seine Automatik zurück -
         # deshalb regelmäßig erneut senden.
         "keepalive": 60.0,
-        # Leistungsmodus so oft neu setzen: Das BIOS des Victus BV8D4EA setzt
+        # BIOS-Modus so oft neu setzen: Das BIOS des Victus BV8D4EA setzt
         # feste Drehzahlen nur um, solange ein Modus kürzlich gesetzt wurde.
         "mode_keepalive": 50.0,
     },
@@ -87,10 +88,7 @@ DEFAULTS: dict = {
         "enabled": True,
         # Nur prüfen und im Fenster anzeigen, nicht selbst installieren.
         "check_only": False,
-        "repo": "Exc3pt10n/hp-victus-fan-control",
-        # Leer = nur freigegebene Versionen (Tags vX.Y.Z) installieren.
-        # Ein Branch-Name = jedem neuen Commit dieses Branches folgen (nur zum Testen).
-        "branch": "",
+        # Quelle und Test-Branch stehen bewusst nicht hier (siehe updater.py).
     },
     "toggle": {
         # Nur für mode = "toggle": Max an ab/aus unter diesem Bedarf.
@@ -101,6 +99,71 @@ DEFAULTS: dict = {
     },
     "profiles": DEFAULT_PROFILES,
 }
+
+
+# --------------------------------------------------------------------------
+# Prüfung: Die config.toml dürfen normale Benutzer bearbeiten (Einstellungs-
+# fenster), der Dienst läuft aber als SYSTEM und steuert die Hardware. Deshalb
+# wird jeder Wert auf Typ und Wertebereich geprüft; Unsinn wie interval = 0 oder
+# critical_temp = 200 wird abgelehnt statt übernommen.
+# --------------------------------------------------------------------------
+# Höchste erlaubte Notfall-Temperatur - fest, nicht konfigurierbar höher.
+MAX_CRITICAL_TEMP = 95.0
+
+NUMBER_LIMITS: dict[str, dict[str, tuple[float, float]]] = {
+    "general": {"interval": (0.5, 30), "critical_temp": (60, MAX_CRITICAL_TEMP)},
+    "control": {"smoothing_up": (0.01, 1), "smoothing_down": (0.01, 1), "hysteresis": (0, 20),
+                "spin_down_delay": (0, 600), "ramp_up_rate": (0.1, 100), "ramp_down_rate": (0.1, 100),
+                "min_running_percent": (0, 60)},
+    "windows": {"min_level": (0, 40), "max_level_cpu": (20, 80), "max_level_gpu": (20, 80),
+                "keepalive": (5, 110), "mode_keepalive": (5, 110)},
+    "toggle": {"engage_percent": (1, 100), "release_percent": (0, 99), "min_on_time": (0, 600)},
+}
+INTEGERS = {("windows", "min_level"), ("windows", "max_level_cpu"), ("windows", "max_level_gpu")}
+CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("general", "backend"): ("windows", "simulate"),
+    ("general", "log_level"): ("DEBUG", "INFO", "WARNING", "ERROR"),
+    ("windows", "mode"): ("level", "toggle"),
+    ("windows", "fan_mode"): ("default", "cool", "performance", ""),
+}
+BOOLEANS = {("update", "enabled"), ("update", "check_only")}
+STRINGS = {("general", "profile"), ("general", "battery_profile"), ("windows", "cpu_sensor")}
+
+
+def validate(raw: dict) -> None:
+    """Prüft alle bekannten Werte; wirft ValueError mit verständlicher Meldung."""
+    for section in ("general", "control", "windows", "update", "toggle", "profiles"):
+        if not isinstance(raw.get(section), dict):
+            raise ValueError(f"[{section}] muss eine Sektion sein")
+    for section, limits in NUMBER_LIMITS.items():
+        for key, (lo, hi) in limits.items():
+            value = raw[section].get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{section}.{key}: Zahl erwartet, gefunden {value!r}")
+            if (section, key) in INTEGERS and not float(value).is_integer():
+                raise ValueError(f"{section}.{key}: ganze Zahl erwartet")
+            if not lo <= value <= hi:
+                raise ValueError(f"{section}.{key} = {value}: erlaubt sind {lo:g} bis {hi:g}")
+    for (section, key), allowed in CHOICES.items():
+        value = raw[section].get(key)
+        check = value.upper() if key == "log_level" and isinstance(value, str) else value
+        if check not in allowed:
+            raise ValueError(f"{section}.{key} = {value!r}: erlaubt sind {', '.join(repr(a) for a in allowed)}")
+    for section, key in BOOLEANS:
+        if not isinstance(raw[section].get(key), bool):
+            raise ValueError(f"{section}.{key}: true oder false erwartet")
+    for section, key in STRINGS:
+        if not isinstance(raw[section].get(key), str):
+            raise ValueError(f"{section}.{key}: Text erwartet")
+    t = raw["toggle"]
+    if t["release_percent"] >= t["engage_percent"]:
+        raise ValueError("toggle.release_percent muss kleiner als engage_percent sein")
+    w = raw["windows"]
+    if w["min_level"] > min(w["max_level_cpu"], w["max_level_gpu"]):
+        raise ValueError("windows.min_level darf nicht größer als die Maximalstufen sein")
+    for name, p in raw["profiles"].items():
+        if not isinstance(p, dict) or "cpu_curve" not in p:
+            raise ValueError(f"Profil '{name}': cpu_curve fehlt")
 
 
 def _merge(base: dict, override: dict) -> dict:
@@ -160,7 +223,10 @@ class Config:
 def _validate_curve(points, label: str) -> list[tuple[float, float]]:
     if not points:
         raise ValueError(f"{label}: Kurve ist leer")
-    curve = [(float(t), float(p)) for t, p in points]
+    try:
+        curve = [(float(t), float(p)) for t, p in points]
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}: Punkte als [Temperatur, Prozent] angeben") from None
     for (t1, _), (t2, _) in zip(curve, curve[1:]):
         if t2 <= t1:
             raise ValueError(f"{label}: Temperaturen müssen aufsteigend sein")
@@ -179,6 +245,7 @@ def load_config(path: str | Path | None) -> Config:
     with path.open("rb") as fh:
         user = tomllib.load(fh)
     cfg = Config(raw=_merge(DEFAULTS, user), path=path)
+    validate(cfg.raw)
     # Profile früh prüfen, damit Fehler beim Start auffallen.
     for name in cfg.raw["profiles"]:
         cfg.profile(name)
@@ -259,23 +326,3 @@ def save_settings(path: str | Path, changes: dict[str, dict]) -> Config:
     path.write_text(text, encoding="utf-8")
     cfg.path = path
     return cfg
-
-
-def reset_auto_chosen_fan_mode(path: str | Path) -> bool:
-    """Einmalige Korrektur (Version 2.0.1): Frühere Versionen wechselten den
-    BIOS-Leistungsmodus selbst (default -> cool -> performance), wenn die Lüfter
-    nicht folgten, und trugen ihn mit dem Vermerk "automatisch gewählt" ein.
-    Die Ursache war aber eine ablaufende Freigabe, kein falscher Modus - solche
-    Einträge werden auf "default" zurückgesetzt. Vom Benutzer gesetzte Werte
-    bleiben unverändert."""
-    import re
-
-    path = Path(path)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
-    if not re.search(r'^fan_mode\s*=\s*"(cool|performance)"\s*#\s*automatisch gewählt', text, re.M):
-        return False
-    update_config_values(path, "windows", {"fan_mode": "default"}, note="zurückgesetzt (Version 2.0.1)")
-    return True

@@ -16,10 +16,15 @@
 .PARAMETER Unattended
     Für den Auto-Updater: keine Rückfragen, Tray-Icon und Updater laufen
     weiter, der Dienst wird auf jeden Fall wieder gestartet.
+
+.PARAMETER NoWait
+    Am Ende nicht auf Enter warten und das Tray-Icon nicht starten (z. B. für
+    automatische Tests).
 #>
 param(
     [switch]$SkipDiagnose,
     [switch]$Unattended,
+    [switch]$NoWait,
     [string]$SourceSha = "",
     [string]$SourceBranch = ""
 )
@@ -39,6 +44,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     Write-Host "Starte mit Administratorrechten neu ..."
     $argList = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
     if ($SkipDiagnose) { $argList += "-SkipDiagnose" }
+    if ($NoWait) { $argList += "-NoWait" }
     Start-Process powershell.exe -Verb RunAs -ArgumentList $argList
     exit
 }
@@ -157,10 +163,49 @@ try {
     if (-not (Test-Python $venvPython)) {
         if ((Invoke-Native $python @("-m", "venv", $venv)) -ne 0) { throw "venv konnte nicht angelegt werden" }
     }
-    $null = Invoke-Native $venvPython @("-m", "pip", "install", "--upgrade", "--quiet", "--disable-pip-version-check", "pip")
-    if ((Invoke-Native $venvPython @("-m", "pip", "install", "--upgrade", "--quiet", "--disable-pip-version-check", "$RepoDir")) -ne 0) {
+    $pip = @("-m", "pip", "--disable-pip-version-check")
+    if (-not $Unattended) {
+        $null = Invoke-Native $venvPython ($pip + @("install", "--upgrade", "--quiet", "pip"))
+    }
+
+    # Zweistufig, damit ein abgebrochener Download (Netz weg, Akku leer) die
+    # laufende Installation nicht beschädigt:
+    # 1. Alle Pakete in einen eigenen Ordner laden bzw. bauen - nur hier wird das
+    #    Netz gebraucht, die Python-Umgebung bleibt unberührt.
+    # 2. Lokal aus diesem Ordner installieren und prüfen. Schlägt das fehl, wird
+    #    die vorherige Version aus ihrem aufgehobenen Paketordner wiederhergestellt.
+    $wheelDir = Join-Path $InstallDir "wheels"
+    $stage    = Join-Path $InstallDir "wheels.new"
+    Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+    if ((Invoke-Native $venvPython ($pip + @("wheel", "--quiet", "--wheel-dir", $stage, "$RepoDir"))) -ne 0) {
+        Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+        throw "Pakete konnten nicht geladen werden - die bisherige Version bleibt unverändert"
+    }
+    $newWheel = Get-ChildItem $stage -Filter "victus_fan-*.whl" | Select-Object -First 1
+    if (-not $newWheel) { throw "Paket der Lüftersteuerung wurde nicht gebaut" }
+    $local = $pip + @("install", "--quiet", "--no-index", "--find-links")
+    $ok = (Invoke-Native $venvPython ($local + @($stage, "--upgrade", $newWheel.FullName))) -eq 0
+    if ($ok) {
+        # Gleiche Versionsnummer (Test-Branch): trotzdem den neuen Stand einspielen
+        $ok = (Invoke-Native $venvPython ($local + @($stage, "--no-deps", "--force-reinstall", $newWheel.FullName))) -eq 0
+    }
+    if ($ok) {
+        $ok = (Invoke-Native $venvPython @("-c", "import victus_fan.cli, victus_fan.service, victus_fan.updater") -Quiet) -eq 0
+    }
+    if (-not $ok) {
+        $oldWheel = $null
+        if (Test-Path $wheelDir) { $oldWheel = Get-ChildItem $wheelDir -Filter "victus_fan-*.whl" | Select-Object -First 1 }
+        if ($oldWheel) {
+            Write-Warning "Installation fehlgeschlagen - stelle die vorherige Version wieder her"
+            $null = Invoke-Native $venvPython ($local + @($wheelDir, "--no-deps", "--force-reinstall", $oldWheel.FullName))
+            $null = Invoke-Native $venvPython ($local + @($wheelDir, $oldWheel.FullName))
+        }
+        Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
         throw "pip install fehlgeschlagen"
     }
+    # Pakete dieser Version für eine spätere Wiederherstellung aufheben
+    Remove-Item -Recurse -Force $wheelDir -ErrorAction SilentlyContinue
+    Move-Item $stage $wheelDir
     if ((Invoke-Native $venvPython @("-c", "import tkinter") -Quiet) -ne 0) {
         Write-Warning "tkinter fehlt - das Fenster der Oberfläche wird nicht funktionieren. Python von python.org mit 'tcl/tk and IDLE' installieren."
     }
@@ -168,6 +213,13 @@ try {
     # --- Konfiguration ----------------------------------------------------
     Step "Konfiguration in $DataDir"
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+    # Ordnerrechte ausdrücklich setzen (statt von ProgramData zu erben, wo Benutzer
+    # eigene Dateien anlegen dürfen): SYSTEM und Administratoren voll, Benutzer
+    # nur lesen. Schreiben dürfen sie nur override.json und config.toml (unten).
+    if ((Invoke-Native "icacls.exe" @($DataDir, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)F",
+            "*S-1-5-32-544:(OI)(CI)F", "${UsersSid}:(OI)(CI)RX") -Quiet) -ne 0) {
+        Write-Warning "Ordnerrechte für $DataDir konnten nicht gesetzt werden"
+    }
     $configFile = Join-Path $DataDir "config.toml"
     if (-not (Test-Path $configFile)) {
         Copy-Item (Join-Path $RepoDir "config.example.toml") $configFile
@@ -196,7 +248,7 @@ try {
     # (HKCU\...\Run, abschaltbar unter Extras > "Mit Windows starten").
     Step "Richte Startmenü-Eintrag ein"
     $iconFile = Join-Path $InstallDir "victus-fan.ico"
-    $null = Invoke-Native $venvPython @("-c", "import sys; from victus_fan.gui import make_fan_image; make_fan_image(256).save(sys.argv[1], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])", $iconFile) -Quiet
+    $null = Invoke-Native $venvPython @("-c", "import sys; from victus_fan.ui.icons import make_fan_image; make_fan_image(256).save(sys.argv[1], sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(256,256)])", $iconFile) -Quiet
     $shell = New-Object -ComObject WScript.Shell
     $menuLnk    = Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "Victus Lüftersteuerung.lnk"
     # Frühere Versionen legten eine Verknüpfung im Autostart aller Benutzer an.
@@ -300,6 +352,10 @@ finally {
 
 if ($Unattended) {
     Write-Host "Update installiert."
+    exit 0
+}
+if ($NoWait) {
+    Write-Host "Installation abgeschlossen."
     exit 0
 }
 

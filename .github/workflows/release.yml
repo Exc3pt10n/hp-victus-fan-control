@@ -1,6 +1,6 @@
-# Tests bei jedem Pull Request; nach einem Merge nach main zusätzlich:
-# Version aus pyproject.toml lesen und - falls neu - Tag v<Version> und
-# GitHub-Release anlegen. Ohne Versionssprung wird nichts getaggt.
+# Tests bei jedem Pull Request (Linux und Windows); nach einem Merge nach main
+# zusätzlich: Version aus victus_fan/__init__.py lesen und - falls neu - Tag
+# v<Version> und GitHub-Release anlegen. Ohne Versionssprung wird nichts getaggt.
 name: Tests und Release
 
 on:
@@ -27,8 +27,89 @@ jobs:
       - name: Tests
         run: python -m unittest -v
 
+  # Alles Windows-Spezifische: Tests mit echten Windows-Bibliotheken, Syntax der
+  # PowerShell-Skripte (Windows PowerShell 5.1) und ein kompletter Durchlauf von
+  # Installation, Update und Deinstallation. Der Dienst startet dabei, findet aber
+  # keine HP-Hardware - geprüft wird die Installation, nicht die Lüftersteuerung.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Tests (Windows)
+        run: |
+          python -m pip install --quiet --disable-pip-version-check pywin32 pystray Pillow
+          python -m unittest -v
+
+      - name: PowerShell-Skripte pruefen
+        shell: powershell
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem install\windows\*.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$null, [ref]$errors) | Out-Null
+            foreach ($e in $errors) {
+              Write-Host "::error file=install/windows/$($file.Name),line=$($e.Extent.StartLineNumber)::$($e.Message)"
+              $failed = $true
+            }
+          }
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser | Out-Null
+            Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          }
+          $issues = Invoke-ScriptAnalyzer -Path install\windows -Severity Error
+          foreach ($i in $issues) {
+            Write-Host "::error file=install/windows/$($i.ScriptName),line=$($i.Line)::$($i.RuleName): $($i.Message)"
+            $failed = $true
+          }
+          if ($failed) { exit 1 }
+
+      - name: Installation, Update und Deinstallation
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          function Check($ok, $text) { if (-not $ok) { throw "Fehlgeschlagen: $text" } else { Write-Host "OK: $text" } }
+          $dir  = Join-Path $env:ProgramFiles "VictusFan"
+          $data = Join-Path $env:ProgramData "VictusFan"
+
+          Write-Host "=== Erstinstallation ==="
+          & .\install\windows\install.ps1 -SkipDiagnose -NoWait
+          Check ($LASTEXITCODE -in 0, $null) "Installer beendet"
+          $py = Join-Path $dir "venv\Scripts\python.exe"
+          & $py -c "import victus_fan, victus_fan.cli, victus_fan.service, victus_fan.updater, victus_fan.backends.gpu_power, win32com.client, pystray, PIL; print(victus_fan.__version__)"
+          Check ($LASTEXITCODE -eq 0) "Python-Umgebung vollstaendig"
+          Check (Test-Path (Join-Path $dir "wheels\victus_fan-*.whl")) "Pakete fuer Wiederherstellung aufgehoben"
+          Check (Get-ScheduledTask -TaskName VictusFanControl -ErrorAction SilentlyContinue) "Aufgabe VictusFanControl"
+          Check (Get-ScheduledTask -TaskName VictusFanUpdate -ErrorAction SilentlyContinue) "Aufgabe VictusFanUpdate"
+          Check (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VictusFanControl") "Eintrag in der App-Liste"
+          $info = Get-Content (Join-Path $dir "installed.json") -Raw | ConvertFrom-Json
+          Check ($info.version -match '^\d+\.\d+\.\d+$') "installed.json mit Version $($info.version)"
+          $acl = (Get-Acl $data).Access
+          Check (-not ($acl | Where-Object { $_.IdentityReference -like "*Users*" -or $_.IdentityReference -like "*Benutzer*" } |
+                 Where-Object { $_.FileSystemRights -match "Write|Modify|FullControl|CreateFiles" })) "Benutzer duerfen im Datenordner nichts anlegen"
+          & icacls (Join-Path $data "config.toml")
+
+          Write-Host "=== Update (wie der Auto-Updater) ==="
+          & .\install\windows\install.ps1 -Unattended -SourceSha ci-test -SourceBranch ci
+          Check ($LASTEXITCODE -eq 0) "Unbeaufsichtigtes Update"
+          $info = Get-Content (Join-Path $dir "installed.json") -Raw | ConvertFrom-Json
+          Check ($info.sha -eq "ci-test" -and $info.source -eq "auto-update") "installed.json aktualisiert"
+          & $py -m victus_fan update --check
+          Write-Host "(Update-Pruefung: Exit-Code $LASTEXITCODE)"
+
+          Write-Host "=== Deinstallation ==="
+          & .\install\windows\uninstall.ps1 -Quiet
+          Check (-not (Test-Path $dir)) "Programmordner entfernt"
+          Check (-not (Get-ScheduledTask -TaskName VictusFanControl -ErrorAction SilentlyContinue)) "Aufgaben entfernt"
+          Check (-not (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\VictusFanControl")) "App-Eintrag entfernt"
+          # Der letzte Programmaufruf (Luefter ans BIOS zurueckgeben) scheitert hier
+          # mangels HP-Hardware - entscheidend sind nur die Pruefungen oben.
+          exit 0
+
   tag:
-    needs: test
+    needs: [test, windows]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -41,12 +122,7 @@ jobs:
       - name: Version lesen
         id: version
         run: |
-          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-          code=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("victus_fan/__init__.py").read()).group(1))')
-          if [ "$version" != "$code" ]; then
-            echo "::error::Version in pyproject.toml ($version) und victus_fan/__init__.py ($code) unterscheiden sich"
-            exit 1
-          fi
+          version=$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+?)\"", open("victus_fan/__init__.py").read()).group(1))')
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
           if git ls-remote --exit-code --tags origin "refs/tags/v$version" > /dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"

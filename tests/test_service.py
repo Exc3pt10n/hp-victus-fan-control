@@ -154,7 +154,7 @@ class ConfigUpdateTest(unittest.TestCase):
 
 class RearmTest(unittest.TestCase):
     """Fallen die Lüfter in die BIOS-Automatik zurück, wird derselbe
-    Leistungsmodus erneut gesetzt - kein Wechsel zu einem anderen Modus."""
+    BIOS-Modus erneut gesetzt - kein Wechsel zu einem anderen Modus."""
 
     def make(self, follows_after_rearm: bool):
         b = FakeBackend(level=True)
@@ -198,20 +198,9 @@ class RearmTest(unittest.TestCase):
         self.run_for(s, 60)
         self.assertGreaterEqual(b.rearms, 1)              # Abweichung trotzdem erkannt
 
-    def test_auto_chosen_mode_is_reset_once(self):
-        from victus_fan.config import reset_auto_chosen_fan_mode
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "config.toml"
-            p.write_text('[windows]\nfan_mode = "performance"  # automatisch gewählt\n', encoding="utf-8")
-            self.assertTrue(reset_auto_chosen_fan_mode(p))
-            self.assertEqual(load_config(p).windows["fan_mode"], "default")
-            self.assertFalse(reset_auto_chosen_fan_mode(p))      # nur einmal
-            p.write_text('[windows]\nfan_mode = "performance"\n', encoding="utf-8")
-            self.assertFalse(reset_auto_chosen_fan_mode(p))      # eigene Wahl bleibt
-
 
 class FanModeTest(unittest.TestCase):
-    """Der BIOS-Leistungsmodus kommt nur aus der Konfiguration ([windows] fan_mode)."""
+    """Der BIOS-Modus kommt nur aus der Konfiguration ([windows] fan_mode)."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -222,30 +211,14 @@ class FanModeTest(unittest.TestCase):
         self.b.reconfigure = lambda settings: self.b.applied.append(settings.get("fan_mode"))
         self.s = FanService(Config(), self.b, override_file=self.override)
 
-    def test_bios_mode_choice_is_applied(self):
-        self.override.write_text(json.dumps({"bios_mode": "performance"}))
-        status = self.s.step()
-        self.assertEqual(self.b.applied, ["performance"])
-        self.assertEqual(status["fan_mode"], "performance")
-        self.s.step()
-        self.assertEqual(self.b.applied, ["performance"])   # nur bei Änderung
-        self.override.write_text(json.dumps({"bios_mode": ""}))   # zurück zur Konfiguration
-        status = self.s.step()
-        self.assertEqual(self.b.applied, ["performance", "default"])
-        self.assertEqual(status["fan_mode"], "default")
-
-    def test_bios_mode_restored_after_pause(self):
-        self.override.write_text(json.dumps({"bios_mode": "cool", "mode": "paused"}))
-        self.s.step()
-        self.override.write_text(json.dumps({"bios_mode": "cool", "mode": "normal"}))
-        self.s.step()
-        self.assertEqual(self.b.applied[-1], "cool")
-
-    def test_old_power_mode_choice_is_ignored(self):
-        self.override.write_text(json.dumps({"power_mode": "performance"}))   # aus Version 2.1
-        status = self.s.step()
-        self.assertEqual(self.b.applied, [])            # nichts umgestellt
-        self.assertEqual(status["fan_mode"], "default")
+    def test_old_power_mode_choices_are_ignored(self):
+        # "power_mode" aus Version 2.1, "bios_mode" aus Version 2.7
+        for key in ("power_mode", "bios_mode"):
+            self.override.write_text(json.dumps({key: "performance"}))
+            status = self.s.step()
+            self.assertEqual(self.b.applied, [])            # nichts umgestellt
+            self.assertEqual(status["fan_mode"], "default")
+            self.assertNotIn("bios_mode", status)
 
     def test_resume_after_pause_sets_mode_again(self):
         self.override.write_text(json.dumps({"mode": "paused"}))

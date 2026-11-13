@@ -8,8 +8,7 @@ from unittest import mock
 
 from victus_fan import paths, updater
 
-REPO = "owner/repo"
-CFG = {"enabled": True, "check_only": False, "repo": REPO, "branch": ""}
+CFG = {"enabled": True, "check_only": False}
 
 
 def fake_get(tag="v2.3.0", sha="b" * 40, fail=None, release=True, tags=None, branch_sha="c" * 40):
@@ -39,6 +38,7 @@ class UpdaterTest(unittest.TestCase):
         patches = [
             mock.patch.object(paths, "INSTALL_INFO", self.tmp / "installed.json"),
             mock.patch.object(paths, "UPDATE_STATUS", self.tmp / "update_status.json"),
+            mock.patch.object(paths, "UPDATE_BRANCH_FILE", self.tmp / "update-branch.txt"),
         ]
         for p in patches:
             p.start()
@@ -47,9 +47,9 @@ class UpdaterTest(unittest.TestCase):
     def installed(self, version, sha="a" * 40):
         paths.INSTALL_INFO.write_text(json.dumps({"version": version, "sha": sha}), encoding="utf-8")
 
-    def check(self, cfg=CFG, **get_args):
+    def check(self, cfg=CFG, branch="", **get_args):
         with mock.patch.object(updater, "_get", fake_get(**get_args)):
-            return updater.check_and_update(cfg, check_only=True)
+            return updater.check_and_update(cfg, check_only=True, branch=branch)
 
     def test_newer_tag_is_offered(self):
         self.installed("2.2.0")
@@ -83,9 +83,33 @@ class UpdaterTest(unittest.TestCase):
 
     def test_branch_mode_follows_commits(self):
         self.installed("2.3.0", sha="b" * 40)
-        status = self.check(cfg=dict(CFG, branch="main"))
+        status = self.check(branch="main")
         self.assertEqual(status["state"], "available")
         self.assertEqual(status["latest_sha"], "c" * 40)
+
+    def test_source_never_comes_from_config(self):
+        # Die config.toml dürfen normale Benutzer bearbeiten - der als SYSTEM laufende
+        # Updater darf daraus weder Repository noch Branch übernehmen.
+        self.installed("2.3.0", sha="b" * 40)
+        urls = []
+        get = fake_get()
+
+        def spy(url, accept="application/vnd.github+json"):
+            urls.append(url)
+            return get(url, accept)
+        with mock.patch.object(updater, "_get", spy):
+            status = updater.check_and_update(dict(CFG, repo="evil/repo", branch="main"), check_only=True)
+        self.assertEqual(status["state"], "current")
+        self.assertTrue(urls and all(updater.REPO in u for u in urls))
+
+    def test_test_branch_file(self):
+        self.assertEqual(updater.test_branch(), "")
+        updater.set_test_branch("claude/test-1")
+        self.assertEqual(updater.test_branch(), "claude/test-1")
+        paths.UPDATE_BRANCH_FILE.write_text("../../x", encoding="utf-8")
+        self.assertEqual(updater.test_branch(), "")      # kein gültiger Branch-Name
+        updater.set_test_branch("")
+        self.assertFalse(paths.UPDATE_BRANCH_FILE.exists())
 
     def test_network_error(self):
         status = self.check(fail="Keine Verbindung")
@@ -101,7 +125,7 @@ class UpdaterTest(unittest.TestCase):
                 mock.patch.object(updater, "run_installer") as inst:
             status = updater.check_and_update(CFG)
         self.assertEqual(status["state"], "updated")
-        dl.assert_called_once_with(REPO, "b" * 40, mock.ANY)
+        dl.assert_called_once_with(updater.REPO, "b" * 40, mock.ANY)
         inst.assert_called_once_with(src, "b" * 40, "v2.3.0")
 
     def test_failed_install_reports_error(self):
@@ -138,20 +162,20 @@ class DownloadTest(unittest.TestCase):
     def test_extracts_root(self):
         data = make_zip(["repo-abc/install/windows/install.ps1", "repo-abc/victus_fan/__init__.py"])
         with tempfile.TemporaryDirectory() as d, mock.patch.object(updater, "_get", return_value=data):
-            root = updater.download_source(REPO, "abc", Path(d))
+            root = updater.download_source("owner/repo", "abc", Path(d))
             self.assertEqual(root.name, "repo-abc")
 
     def test_rejects_path_traversal(self):
         data = make_zip(["repo-abc/install/windows/install.ps1", "repo-abc/../../evil.txt"])
         with tempfile.TemporaryDirectory() as d, mock.patch.object(updater, "_get", return_value=data):
             with self.assertRaises(updater.UpdateError):
-                updater.download_source(REPO, "abc", Path(d))
+                updater.download_source("owner/repo", "abc", Path(d))
 
     def test_rejects_archive_without_installer(self):
         data = make_zip(["repo-abc/README.md"])
         with tempfile.TemporaryDirectory() as d, mock.patch.object(updater, "_get", return_value=data):
             with self.assertRaises(updater.UpdateError):
-                updater.download_source(REPO, "abc", Path(d))
+                updater.download_source("owner/repo", "abc", Path(d))
 
 
 if __name__ == "__main__":

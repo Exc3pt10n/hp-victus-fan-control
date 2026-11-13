@@ -3,12 +3,18 @@
 Ablauf (läuft als geplante Aufgabe "VictusFanUpdate" mit SYSTEM-Rechten):
 
 1. Neueste Version abfragen: das letzte GitHub-Release bzw. den höchsten Tag
-   ``vX.Y.Z`` (angelegt vom Workflow nach einem Merge in main). Nur mit
-   ``[update] branch`` wird stattdessen jeder neue Commit eines Branches verfolgt.
+   ``vX.Y.Z`` (angelegt vom Workflow nach einem Merge in main). Nur mit einem
+   Test-Branch (``victus-fan update --branch NAME``, nur als Administrator) wird
+   stattdessen jeder neue Commit eines Branches verfolgt.
 2. Mit dem installierten Stand (installed.json) vergleichen - installiert wird
    nur eine neuere Version, nie eine ältere.
 3. Den Quellcode als ZIP laden und dessen eigenen Installer unbeaufsichtigt
    ausführen (install.ps1 -Unattended)
+
+Sicherheit: Weil der Updater als SYSTEM fremden Code ausführt, kommen Quelle
+(``REPO``) und Test-Branch nie aus der config.toml - die dürfen normale
+Benutzer bearbeiten. Das Repository steht fest im Code, der Test-Branch in
+einer Datei im Programmordner (nur Administratoren).
 
 Der Installer stoppt nur den Dienst, aktualisiert die Python-Umgebung und
 startet den Dienst wieder. Das Tray-Icon bemerkt die neue installed.json und
@@ -35,6 +41,7 @@ from . import __version__, paths
 
 log = logging.getLogger(__name__)
 
+REPO = "Exc3pt10n/hp-victus-fan-control"
 API = "https://api.github.com"
 CODELOAD = "https://codeload.github.com"
 USER_AGENT = f"victus-fan-updater/{__version__}"
@@ -133,6 +140,27 @@ def installed() -> dict:
     return read_json(paths.INSTALL_INFO)
 
 
+def test_branch() -> str:
+    """Test-Branch aus dem Programmordner ("" = nur freigegebene Versionen)."""
+    try:
+        name = paths.UPDATE_BRANCH_FILE.read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return ""
+    # Nur übliche Branch-Namen (keine Pfade/URLs)
+    if name and all(c.isalnum() or c in "-_./" for c in name) and ".." not in name:
+        return name
+    return ""
+
+
+def set_test_branch(name: str) -> None:
+    """Test-Branch setzen bzw. mit "" entfernen (Administratorrechte nötig)."""
+    if name:
+        paths.UPDATE_BRANCH_FILE.parent.mkdir(parents=True, exist_ok=True)
+        paths.UPDATE_BRANCH_FILE.write_text(name + "\n", encoding="utf-8")
+    else:
+        paths.UPDATE_BRANCH_FILE.unlink(missing_ok=True)
+
+
 def write_status(**fields) -> dict:
     status = read_json(paths.UPDATE_STATUS)
     status.update(fields, checked_at=time.strftime("%Y-%m-%d %H:%M"))
@@ -163,8 +191,14 @@ def run_installer(src: Path, sha: str, branch: str) -> None:
         raise UpdateError(f"Installer fehlgeschlagen (Code {proc.returncode}) - siehe {paths.UPDATE_INSTALL_LOG.name}")
 
 
-def check_and_update(cfg: dict, force: bool = False, check_only: bool | None = None) -> dict:
-    """Prüft auf ein Update und installiert es ggf. Gibt den neuen Status zurück."""
+def check_and_update(cfg: dict, force: bool = False, check_only: bool | None = None,
+                     branch: str | None = None) -> dict:
+    """Prüft auf ein Update und installiert es ggf. Gibt den neuen Status zurück.
+
+    ``cfg`` ist die [update]-Sektion (nur enabled/check_only werden genutzt).
+    ``branch`` None = Test-Branch aus dem Programmordner."""
+    if branch is None:
+        branch = test_branch()
     if check_only is None:
         check_only = bool(cfg.get("check_only"))
     current = installed()
@@ -176,10 +210,10 @@ def check_and_update(cfg: dict, force: bool = False, check_only: bool | None = N
                      updated_at=current.get("installed_at", ""),
                      message=f"Aktualisiert: {previous.get('latest_message', '')}")
     try:
-        repo = cfg["repo"]
-        if cfg.get("branch"):
-            # Sonderfall: jedem neuen Commit eines Branches folgen
-            ref = cfg["branch"]
+        repo = REPO
+        if branch:
+            # Sonderfall (nur zum Testen): jedem neuen Commit eines Branches folgen
+            ref = branch
             latest = latest_commit(repo, ref)
             latest["version"] = ""
             newer = latest["sha"] != current.get("sha")

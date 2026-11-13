@@ -1,7 +1,10 @@
 import unittest
 
+import tempfile
+from pathlib import Path
+
 from victus_fan.config import DEFAULTS, Config, Profile, load_config
-from victus_fan.controller import FanController, Reading, ToggleAdapter, interpolate
+from victus_fan.controller import SAFETY_FLOOR, FanController, Reading, ToggleAdapter, interpolate
 
 
 def make(**overrides):
@@ -91,6 +94,26 @@ class ControllerTest(unittest.TestCase):
         self.assertEqual(d.percent, 20)
 
 
+    def test_flat_curve_cannot_keep_fans_off_when_hot(self):
+        flat = Profile("flat", [(0, 0), (100, 0)], [(0, 0), (100, 0)])
+        c = make()
+        self.assertEqual(c.update(Reading(70.0), flat, now=0).percent, 0)
+        c = make()
+        self.assertGreaterEqual(c.update(Reading(88.0), flat, now=0).percent, 60)
+
+    def test_critical_temp_is_capped(self):
+        c = FanController(DEFAULTS["control"], 150)
+        self.assertTrue(c.update(Reading(95.0), self.profile, now=0).critical)
+
+    def test_default_profiles_stay_above_safety_floor(self):
+        cfg = Config()
+        for name in cfg.raw["profiles"]:
+            p = cfg.profile(name)
+            for t in range(0, 96):
+                self.assertGreaterEqual(interpolate(p.cpu_curve, t), interpolate(SAFETY_FLOOR, t), name)
+                self.assertGreaterEqual(interpolate(p.gpu_curve, t), interpolate(SAFETY_FLOOR, t), name)
+
+
 class ToggleTest(unittest.TestCase):
     def test_hysteresis(self):
         t = ToggleAdapter(80, 55)
@@ -120,6 +143,26 @@ class ConfigTest(unittest.TestCase):
             for t in range(50, 101):
                 self.assertGreater(interpolate(p.cpu_curve, t), 0, f"{name} bei {t} °C")
         self.assertEqual(interpolate(cfg.profile("balanced").cpu_curve, 30), 20)
+
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.toml"
+            path.write_text(text, encoding="utf-8")
+            return load_config(path)
+
+    def test_invalid_values_rejected(self):
+        for text in ("[general]\ninterval = 0", "[general]\ninterval = \"2\"",
+                     "[general]\ncritical_temp = 200", "[control]\nramp_down_rate = -1",
+                     "[windows]\nmax_level_cpu = 54.5", "[windows]\nmode = \"turbo\"",
+                     "[update]\nenabled = \"ja\"", "[toggle]\nrelease_percent = 90",
+                     "general = 5", "[profiles.x]\ncpu_curve = [[\"a\", 1]]"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                self.load(text)
+
+    def test_valid_values_and_old_keys_accepted(self):
+        cfg = self.load('[general]\nlog_level = "debug"\ninterval = 1\n'
+                        '[update]\nrepo = "x/y"\nbranch = "main"\n')     # alte Schlüssel stören nicht
+        self.assertEqual(cfg.general["interval"], 1)
 
     def test_invalid_curve_rejected(self):
         cfg = Config()

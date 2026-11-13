@@ -13,12 +13,12 @@ from .backends import BackendError, FanBackend
 from .config import Config, load_config
 from .controller import FanController, Reading, ToggleAdapter
 from .power_events import DISPLAY_OFF, DISPLAY_ON, RESUME, SUSPEND, PowerEvents
-from .state import BIOS_MODES, DEFAULT_OVERRIDE, read_override
+from .state import DEFAULT_OVERRIDE, read_override
 
 log = logging.getLogger(__name__)
 
 # Folgen die Lüfter der Vorgabe nicht (BIOS-Automatik übernimmt, Lüfter steht),
-# werden Leistungsmodus und Drehzahl erneut gesetzt - höchstens einmal pro
+# werden BIOS-Modus und Drehzahl erneut gesetzt - höchstens einmal pro
 # REARM_INTERVAL, aber ohne aufzugeben. Nach REARM_WARN erfolglosen Versuchen
 # in Folge erscheint zusätzlich eine Warnung.
 REARM_INTERVAL = 60.0
@@ -44,7 +44,7 @@ class FanService:
         # Standby/Bildschirm aus: die Firmware regelt, Abweichungen sind dann normal.
         self.power_events = power_events
         self._low_power = False
-        # Zuletzt an das Backend gegebener BIOS-Leistungsmodus
+        # Zuletzt an das Backend gegebener BIOS-Modus
         self._applied_fan_mode = config.windows.get("fan_mode") or ""
         self._display_known = False      # liefert Windows Bildschirm-Meldungen?
         self._last_wall: float | None = None
@@ -84,13 +84,21 @@ class FanService:
         except Exception as exc:  # noqa: BLE001
             log.error("Konfiguration fehlerhaft, behalte die alte: %s", exc)
             return
+        # load_config hat alle Werte geprüft; trotzdem erst Regler und Toggle
+        # umstellen und die neue Konfiguration erst danach übernehmen - so bleibt
+        # bei einem Fehler nie ein halb übernommener Zustand zurück.
+        try:
+            self.controller.configure(new.control, new.general["critical_temp"])
+            self.toggle.configure(float(new.toggle["engage_percent"]), float(new.toggle["release_percent"]),
+                                  float(new.toggle["min_on_time"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            log.error("Konfiguration nicht übernehmbar, behalte die alte: %s", exc)
+            self.controller.configure(self.config.control, self.config.general["critical_temp"])
+            return
         old_windows = self.config.windows
         self.config = new
         if new.windows != old_windows:
             self._apply_backend_settings()
-        self.controller.configure(new.control, new.general["critical_temp"])
-        self.toggle.configure(float(new.toggle["engage_percent"]), float(new.toggle["release_percent"]),
-                              float(new.toggle["min_on_time"]))
         log.info("Konfiguration neu geladen")
 
     def _override(self) -> dict:
@@ -159,7 +167,7 @@ class FanService:
                 # Mit Bildschirm-Meldungen beendet nur "Bildschirm an" den Standby -
                 # ein Aufwachen bei dunklem Bildschirm ist meist Wartung im Standby.
                 if self._low_power or event == RESUME:
-                    log.info("%s - setze Leistungsmodus und Drehzahl neu",
+                    log.info("%s - setze BIOS-Modus und Drehzahl neu",
                              "Aus dem Standby zurück" if event == RESUME else "Bildschirm an")
                     self._take_back_control(now)
                 self._low_power = False
@@ -184,11 +192,6 @@ class FanService:
         reading = Reading(_round(b.read_cpu_temp()), _round(b.read_gpu_temp()), on_battery)
         override = self._override()
         mode = override["mode"]
-        if mode != "paused" and not self._paused:
-            wanted = self.effective_windows(override).get("fan_mode") or ""
-            if wanted != self._applied_fan_mode:
-                log.info("BIOS-Leistungsmodus -> %s", wanted)
-                self._apply_backend_settings(override)
         name, reason = self.active_profile_name(on_battery, override)
         profile = self.config.profile(name)
 
@@ -199,7 +202,7 @@ class FanService:
             if not self._paused:
                 log.info("Pausiert - Lüfter laufen in der BIOS-Automatik")
                 if not self.dry_run:
-                    b.shutdown()  # inkl. BIOS-Leistungsmodus zurück auf Standard
+                    b.shutdown()  # inkl. BIOS-Modus zurück auf Standard
                 self._paused = True
                 self._last_sent = None
             output = "BIOS"
@@ -207,7 +210,7 @@ class FanService:
             if self._paused:
                 log.info("Steuerung fortgesetzt")
                 self._paused = False
-                self._apply_backend_settings()   # Leistungsmodus wieder setzen
+                self._apply_backend_settings()   # BIOS-Modus wieder setzen
             output = self._apply(decision.percent, decision.critical, now, force_max=(mode == "max"))
 
         if mode == "normal" and not self.dry_run and not self._low_power and hasattr(b, "maintain"):
@@ -222,13 +225,13 @@ class FanService:
             "mode": mode,
             "supports_level": b.supports_level,
             "fan_mode": "" if mode == "paused" else self._applied_fan_mode,
-            "bios_mode": override["bios_mode"],
             "backend": b.name,
             "profile": name,
             "profile_reason": reason,
             "on_battery": on_battery,
             "cpu_temp": reading.cpu_temp,
             "gpu_temp": reading.gpu_temp,
+            "gpu_asleep": b.gpu_asleep(),
             "cpu_smoothed": None if decision.cpu_smooth is None else round(decision.cpu_smooth, 1),
             "gpu_smoothed": None if decision.gpu_smooth is None else round(decision.gpu_smooth, 1),
             "demand_percent": round(decision.demand, 1),
@@ -268,7 +271,7 @@ class FanService:
             self._mismatch_since = now
             since = getattr(self.backend, "seconds_since_mode", lambda: float("nan"))()
             log.warning("Drehzahl %s U/min weicht von der Vorgabe %s U/min ab "
-                        "(%.0f s nach dem letzten Setzen des Leistungsmodus)", rpm, expected, since)
+                        "(%.0f s nach dem letzten Setzen des BIOS-Modus)", rpm, expected, since)
             context = getattr(self.backend, "diagnostic_context", None)
             if context is not None:
                 try:
@@ -280,26 +283,20 @@ class FanService:
         return self._mismatch_warning(now)
 
     def _rearm(self, now: float) -> None:
-        """Leistungsmodus und Drehzahl erneut setzen (inkl. Anlaufhilfe)."""
+        """BIOS-Modus und Drehzahl erneut setzen (inkl. Anlaufhilfe)."""
         self._rearm_count += 1
         self._last_rearm_at = now
-        log.info("Setze Leistungsmodus und Drehzahl erneut (Versuch %d)", self._rearm_count)
+        log.info("Setze BIOS-Modus und Drehzahl erneut (Versuch %d)", self._rearm_count)
         self.backend.rearm()
         self._last_sent = None       # Drehzahl sofort neu senden
 
-    def effective_windows(self, override: dict) -> dict:
-        """[windows]-Einstellungen mit dem in der Oberfläche gewählten Leistungsmodus."""
-        settings = dict(self.config.windows)
-        if override.get("bios_mode") in BIOS_MODES:
-            settings["fan_mode"] = override["bios_mode"]
-        return settings
-
-    def _apply_backend_settings(self, override: dict | None = None) -> None:
-        """[windows]-Einstellungen (u. a. BIOS-Leistungsmodus) an das Backend geben
-        - nach einer Konfig-Änderung, einem Moduswechsel und beim Fortsetzen."""
+    def _apply_backend_settings(self) -> None:
+        """[windows]-Einstellungen an das Backend geben - beim Start, nach einer
+        Konfig-Änderung und beim Fortsetzen. Der BIOS-Modus aus "fan_mode" schaltet
+        die Drehzahlvorgabe frei; er ist keine Leistungseinstellung."""
         if self.dry_run:
             return
-        settings = self.effective_windows(override if override is not None else self._override())
+        settings = dict(self.config.windows)
         self.backend.reconfigure(settings)
         self._applied_fan_mode = settings.get("fan_mode") or ""
         self._last_sent = None      # Drehzahl neu senden

@@ -6,7 +6,7 @@ hier nicht dem Rückgabecode vertraut, sondern die gemessene Drehzahl verglichen
 Ablauf:
 1. Drehzahl in der BIOS-Automatik
 2. Max-Lüfter an (ergibt auch die echte Maximaldrehzahl)
-3. Leistungsmodi der Reihe nach setzen, bis feste Drehzahlen wirken
+3. BIOS-Modi der Reihe nach setzen, bis feste Drehzahlen wirken
    (Victus BV8D4EA: das BIOS setzt sie erst nach dem Setzen eines Modus um)
 4. Niedrige Stufen im gefundenen Modus (Untergrenze, Stillstand, Anlauf aus
    dem Stillstand - beim Victus BV8D4EA läuft ein stehender Lüfter bei
@@ -124,7 +124,7 @@ def run(backend, settle: float = 15.0, say=print) -> Result:
 
     try:
         for mode in (TEST_FAN_MODES if has_modes else ("",)):
-            say(f"\n3) Feste Drehzahl{f' im Leistungsmodus {mode}' if mode else ''}")
+            say(f"\n3) Feste Drehzahl{f' im BIOS-Modus {mode}' if mode else ''}")
             if mode:
                 try:
                     backend.set_fan_mode(mode)
@@ -210,7 +210,7 @@ def report(r: Result, say=print) -> None:
 
     rec = r.recommendation
     if rec.get("mode") == "level":
-        extra = f" im BIOS-Leistungsmodus '{rec['fan_mode']}'" if rec.get("fan_mode") else ""
+        extra = f" im BIOS-Modus '{rec['fan_mode']}'" if rec.get("fan_mode") else ""
         say(f"\n-> Stufenlose Steuerung möglich{extra}.")
         if rec.get("fan_mode") == "performance":
             say("   Hinweis: 'performance' erlaubt mehr Leistungsaufnahme (etwas mehr Wärme).")
