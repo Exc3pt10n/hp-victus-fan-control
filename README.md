@@ -42,6 +42,8 @@ Beim Überfahren zeigt es CPU- und GPU-Temperatur sowie die **tatsächliche Dreh
 
 Das Fenster zeigt Temperaturen und die gemessenen Lüfterdrehzahlen (der Balken zeigt die Drehzahl,
 der Strich darin das Ziel der Steuerung), den Verlauf der letzten 10 Minuten und die Einstellungen.
+Fährt man mit der Maus über den Verlauf, zeigt er für den Zeitpunkt Temperaturen, Lüfterdrehzahl
+sowie das aktive Lüfterprofil und den Leistungsmodus; gestrichelte Linien markieren Wechsel.
 Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktionen
 (Updates, Hardware-Test, Sensoren, Konfiguration, Log, Dienst neu starten, Autostart) liegen
 unter **Extras**.
@@ -61,9 +63,8 @@ Das BIOS regelt die Lüfter wie ab Werk. Darunter gibt es zwei Einstellungen:
 | **Maximum** | Beide Lüfter dauerhaft mit voller Drehzahl (≈ 5400 U/min) |
 
 **Leistung (BIOS)** – derselbe Leistungsmodus wie im OMEN Gaming Hub: **Standard**, **Kühl**
-(laut HP weniger Leistung, kühleres Gehäuse) und **Performance** (laut HP mehr Leistung). Auf dem
-Victus BV8D4EA war in 3DMark Speed Way allerdings kein Unterschied messbar (2 284 / 2 275 /
-2 275 Punkte). Was die Leistung wirklich bestimmt, ist die **Stromversorgung**: Am HP-Netzteil
+(laut HP weniger Leistung, kühleres Gehäuse) und **Performance** (laut HP mehr Leistung).
+Was die Leistung wirklich bestimmt, ist die **Stromversorgung**: Am HP-Netzteil
 darf die CPU dauerhaft 54 W aufnehmen (65 W im Boost), an einer USB-C-Dockingstation nur 35 W.
 
 Die Oberfläche läuft mit normalen Benutzerrechten; nur der Hintergrunddienst spricht mit

@@ -49,15 +49,13 @@ FAN_HINTS = {
 }
 PAUSED_HINT = "Die Lüftersteuerung ist aus – das BIOS regelt die Lüfter wie ab Werk."
 
-# BIOS-Leistungsmodus (wie im OMEN Gaming Hub). Gemessen am Victus BV8D4EA
-# (3DMark Speed Way) ohne Unterschied - das steht ehrlich in der Erklärung.
+# BIOS-Leistungsmodus (wie im OMEN Gaming Hub).
 BIOS_LABELS = {"default": "Standard", "cool": "Kühl", "performance": "Performance"}
 BIOS_HINTS = {
     "default": "Normale Leistungsgrenzen des Notebooks.",
     "cool": "Laut HP weniger Leistung und ein kühleres Gehäuse.",
     "performance": "Laut HP mehr Leistung für Spiele.",
 }
-BIOS_NOTE = " Auf diesem Notebook war in 3DMark kein Unterschied messbar."
 
 
 def profile_label(name: str) -> str:
@@ -486,19 +484,39 @@ class Metric(Card):
 
 
 class Chart(tk.Canvas):
-    """Verlauf der letzten 10 Minuten: CPU, GPU (°C) und Lüfter (% der Maximaldrehzahl)."""
+    """Verlauf der letzten 10 Minuten: CPU, GPU (°C) und Lüfter (% der Maximaldrehzahl).
+
+    Mit der Maus darüber: Messpunkt mit Uhrzeit, Werten, Lüfterprofil und
+    Leistungsmodus. Gestrichelte Linien markieren, wann Profil oder Leistung
+    gewechselt haben.
+    """
 
     PAD_L, PAD_R, PAD_T, PAD_B = 30, 8, 8, 18
+    SERIES = (("fan", FAN_COLOR), ("gpu", GPU_COLOR), ("cpu", CPU_COLOR))
 
     def __init__(self, master, history: deque):
-        super().__init__(master, bg=C.CARD, height=140, width=300, highlightthickness=0)
+        super().__init__(master, bg=C.CARD, height=150, width=300, highlightthickness=0)
         self.history = history
+        self.hover_x: int | None = None
         self.bind("<Configure>", lambda _e: self.redraw())
+        self.bind("<Motion>", self._on_motion)
+        self.bind("<Leave>", self._on_leave)
+
+    def _on_motion(self, event) -> None:
+        self.hover_x = event.x
+        self.redraw()
+
+    def _on_leave(self, _event) -> None:
+        self.hover_x = None
+        self.redraw()
 
     def _xy(self, t, v, now, w, h):
         pw, ph = w - self.PAD_L - self.PAD_R, h - self.PAD_T - self.PAD_B
         return (self.PAD_L + pw * (1 - (now - t) / HISTORY_SECONDS),
                 self.PAD_T + ph * (1 - max(0, min(100, v)) / 100))
+
+    def _visible(self, now: float) -> list[dict]:
+        return [e for e in self.history if now - e["t"] <= HISTORY_SECONDS]
 
     def redraw(self) -> None:
         self.delete("all")
@@ -506,6 +524,7 @@ class Chart(tk.Canvas):
         if w < 50:
             return
         now = time.time()
+        entries = self._visible(now)
         for v in (0, 50, 100):
             _, y = self._xy(now, v, now, w, h)
             self.create_line(self.PAD_L, y, w - self.PAD_R, y, fill=C.BORDER)
@@ -514,18 +533,62 @@ class Chart(tk.Canvas):
             x, _ = self._xy(now - minutes * 60, 0, now, w, h)
             self.create_text(x, h - 2, text="jetzt" if minutes == 0 else f"−{minutes} min",
                              anchor=anchor, fill=C.MUTED, font=(FONT, 8))
+
+        # Wechsel von Lüfterprofil oder Leistung: gestrichelte senkrechte Linie
+        for prev, cur in zip(entries, entries[1:]):
+            if (prev["fan_label"], prev["bios"]) != (cur["fan_label"], cur["bios"]):
+                x, _ = self._xy(cur["t"], 0, now, w, h)
+                self.create_line(x, self.PAD_T, x, h - self.PAD_B, fill=C.MUTED, dash=(2, 3))
+
         drawn = False
-        for index, color in ((3, FAN_COLOR), (2, GPU_COLOR), (1, CPU_COLOR)):
+        for key, color in self.SERIES:
             points = []
-            for entry in self.history:
-                if entry[index] is not None and now - entry[0] <= HISTORY_SECONDS:
-                    points.extend(self._xy(entry[0], entry[index], now, w, h))
+            for e in entries:
+                if e[key] is not None:
+                    points.extend(self._xy(e["t"], e[key], now, w, h))
             if len(points) >= 4:
                 self.create_line(*points, fill=color, width=2, smooth=True)
                 drawn = True
         if not drawn:
             self.create_text(w / 2, h / 2 - 6, text="Verlauf erscheint nach einigen Sekunden",
                              fill=C.MUTED, font=(FONT, 9))
+            return
+        if self.hover_x is not None and self.PAD_L <= self.hover_x <= w - self.PAD_R:
+            self._draw_hover(entries, now, w, h)
+
+    def _draw_hover(self, entries: list[dict], now: float, w: int, h: int) -> None:
+        nearest = min(entries, key=lambda e: abs(self._xy(e["t"], 0, now, w, h)[0] - self.hover_x))
+        x, _ = self._xy(nearest["t"], 0, now, w, h)
+        self.create_line(x, self.PAD_T, x, h - self.PAD_B, fill=C.TEXT, width=1)
+        for key, color in self.SERIES:
+            if nearest[key] is not None:
+                _, y = self._xy(nearest["t"], nearest[key], now, w, h)
+                self.create_oval(x - 4, y - 4, x + 4, y + 4, fill=color, outline=C.CARD, width=2)
+
+        lines = [time.strftime("%H:%M:%S", time.localtime(nearest["t"])),
+                 f"CPU {fmt_temp(nearest['cpu'])} · GPU {fmt_temp(nearest['gpu'])}"]
+        rpm = nearest.get("rpm") or []
+        fan = f"{nearest['fan']:.0f} %" if nearest["fan"] is not None else "–"
+        lines.append(f"Lüfter {fan}" + (f" · {' / '.join(f'{r:,}'.replace(',', '.') for r in rpm)} U/min"
+                                        if rpm else ""))
+        lines.append(f"Profil: {nearest['fan_label']}")
+        lines.append(f"Leistung: {nearest['bios'] or '–'}")
+
+        # Infofeld neben der Linie, auf der Seite mit mehr Platz: Uhrzeit fett, darunter die Werte
+        head = self.create_text(0, 0, text=lines[0], anchor="nw", fill=C.TEXT, font=(FONT, 8, "bold"))
+        body = self.create_text(0, 0, text="\n".join(lines[1:]), anchor="nw", fill=C.TEXT,
+                                font=(FONT, 8), justify="left")
+        hx1, hy1, hx2, hy2 = self.bbox(head)
+        bx1, by1, bx2, by2 = self.bbox(body)
+        bw = max(hx2 - hx1, bx2 - bx1) + 16
+        bh = (hy2 - hy1) + 2 + (by2 - by1) + 12
+        left = x + 10 if x + 10 + bw <= w - self.PAD_R else x - 10 - bw
+        top = self.PAD_T
+        self.create_rectangle(left, top, left + bw, top + bh, fill=C.TRACK, outline=C.BORDER)
+        self.coords(head, left + 8, top + 6)
+        self.coords(body, left + 8, top + 6 + (hy2 - hy1) + 2)
+        self.tag_raise(head)
+        self.tag_raise(body)
 
 
 def _dark_title_bar(root: tk.Tk) -> None:
@@ -567,7 +630,7 @@ class App:
         self.root = tk.Tk()
         self.root.title("Victus Lüftersteuerung")
         self.root.configure(bg=C.BG)
-        self.root.minsize(660, 600)   # feste Breite: das Fenster springt nicht mit der Textlänge
+        self.root.minsize(680, 610)   # feste Breite: das Fenster springt nicht mit der Textlänge
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         try:
             from PIL import ImageTk
@@ -931,12 +994,26 @@ class App:
         running = status is not None and not status["stale"]
         if running and status["timestamp"] != self.last_ts:
             self.last_ts = status["timestamp"]
-            self.history.append((status["timestamp"], status["cpu_temp"], status["gpu_temp"],
-                                 self._fan_percent(status)))
+            self.history.append({
+                "t": status["timestamp"], "cpu": status["cpu_temp"], "gpu": status["gpu_temp"],
+                "fan": self._fan_percent(status), "rpm": status.get("fan_rpm") or [],
+                "fan_label": self._fan_label(status),
+                "bios": BIOS_LABELS.get(status.get("fan_mode", ""), ""),
+            })
         self._render_settings(override, status if running else None)
         self._render(status, running)
         if reschedule:
             self.root.after(self.POLL_MS, self.poll)
+
+    @staticmethod
+    def _fan_label(s: dict) -> str:
+        """Aktive Lüfter-Einstellung zu einem Messpunkt (für den Verlauf)."""
+        if s.get("mode") == "paused":
+            return "Steuerung aus (BIOS)"
+        if s.get("mode") == "max":
+            return MAX_LABEL
+        label = profile_label(s.get("profile", ""))
+        return label + (" (automatisch)" if s.get("profile_reason") in ("Netz", "Akku") else "")
 
     @staticmethod
     def _fan_percent(s: dict) -> float | None:
@@ -970,7 +1047,7 @@ class App:
         if not active:
             self.bios_hint.config(text="Bei ausgeschalteter Lüftersteuerung gilt der BIOS-Standard.")
         else:
-            self.bios_hint.config(text=BIOS_HINTS.get(bios, "") + (BIOS_NOTE if bios != "default" else ""))
+            self.bios_hint.config(text=BIOS_HINTS.get(bios, ""))
 
     def _set_state(self, text: str, color: str) -> None:
         self.state_dot.config(fg=color)
