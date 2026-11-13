@@ -49,13 +49,6 @@ FAN_HINTS = {
 }
 PAUSED_HINT = "Die Lüftersteuerung ist aus – das BIOS regelt die Lüfter wie ab Werk."
 
-# BIOS-Leistungsmodus (wie im OMEN Gaming Hub).
-BIOS_LABELS = {"default": "Standard", "cool": "Kühl", "performance": "Performance"}
-BIOS_HINTS = {
-    "default": "Normale Leistungsgrenzen des Notebooks.",
-    "cool": "Laut HP weniger Leistung und ein kühleres Gehäuse.",
-    "performance": "Laut HP mehr Leistung für Spiele.",
-}
 
 
 def profile_label(name: str) -> str:
@@ -486,9 +479,8 @@ class Metric(Card):
 class Chart(tk.Canvas):
     """Verlauf der letzten 10 Minuten: CPU, GPU (°C) und Lüfter (% der Maximaldrehzahl).
 
-    Mit der Maus darüber: Messpunkt mit Uhrzeit, Werten, Lüfterprofil und
-    Leistungsmodus. Gestrichelte Linien markieren, wann Profil oder Leistung
-    gewechselt haben.
+    Mit der Maus darüber: Messpunkt mit Uhrzeit, Werten und Lüfterprofil.
+    Gestrichelte Linien markieren, wann das Profil gewechselt hat.
     """
 
     PAD_L, PAD_R, PAD_T, PAD_B = 30, 8, 8, 18
@@ -534,9 +526,9 @@ class Chart(tk.Canvas):
             self.create_text(x, h - 2, text="jetzt" if minutes == 0 else f"−{minutes} min",
                              anchor=anchor, fill=C.MUTED, font=(FONT, 8))
 
-        # Wechsel von Lüfterprofil oder Leistung: gestrichelte senkrechte Linie
+        # Wechsel des Lüfterprofils: gestrichelte senkrechte Linie
         for prev, cur in zip(entries, entries[1:]):
-            if (prev["fan_label"], prev["bios"]) != (cur["fan_label"], cur["bios"]):
+            if prev["fan_label"] != cur["fan_label"]:
                 x, _ = self._xy(cur["t"], 0, now, w, h)
                 self.create_line(x, self.PAD_T, x, h - self.PAD_B, fill=C.MUTED, dash=(2, 3))
 
@@ -572,7 +564,6 @@ class Chart(tk.Canvas):
         lines.append(f"Lüfter {fan}" + (f" · {' / '.join(f'{r:,}'.replace(',', '.') for r in rpm)} U/min"
                                         if rpm else ""))
         lines.append(f"Profil: {nearest['fan_label']}")
-        lines.append(f"Leistung: {nearest['bios'] or '–'}")
 
         # Infofeld neben der Linie, auf der Seite mit mehr Platz: Uhrzeit fett, darunter die Werte
         head = self.create_text(0, 0, text=lines[0], anchor="nw", fill=C.TEXT, font=(FONT, 8, "bold"))
@@ -653,7 +644,7 @@ class App:
         self.root = tk.Tk()
         self.root.title("Victus Lüftersteuerung")
         self.root.configure(bg=C.BG)
-        self.root.minsize(680, 610)   # feste Breite: das Fenster springt nicht mit der Textlänge
+        self.root.minsize(680, 550)   # feste Breite: das Fenster springt nicht mit der Textlänge
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         try:
             from PIL import ImageTk
@@ -745,13 +736,10 @@ class App:
         self.chart = Chart(chart_card, self.history)
         self.chart.pack(fill="x", padx=6, pady=(2, 6))
 
-        # Einstellungen: zwei getrennte Fragen - wie arbeiten die Lüfter, und wie
-        # viel Leistung darf das Notebook aufnehmen. Jeweils mit Erklärung.
+        # Einstellung: wie arbeiten die Lüfter (mit Erklärung)
         settings = Card(outer)
         settings.pack(fill="x", pady=(10, 0))
-        self.fan_seg, self.fan_hint = self._setting(settings, "Lüfter", self.set_fan)
-        self.bios_seg, self.bios_hint = self._setting(settings, "Leistung (BIOS)", self.set_bios, last=True)
-        self.bios_seg.set_options(list(BIOS_LABELS.items()))
+        self.fan_seg, self.fan_hint = self._setting(settings, "Lüfter", self.set_fan, last=True)
         self._fill_profiles()
 
         # Fußzeile: Version/Update links, Extras rechts
@@ -815,17 +803,10 @@ class App:
                                      enabled=lambda _i: read_override()["mode"] != "paused")
                     for value, label in self._fan_options()]
 
-        def bios_items():
-            return [pystray.MenuItem(label, call(self.set_bios, value), radio=True,
-                                     checked=lambda _i, v=value: self._bios_choice(read_override()) == v,
-                                     enabled=lambda _i: read_override()["mode"] != "paused")
-                    for value, label in BIOS_LABELS.items()]
-
         menu = pystray.Menu(
             pystray.MenuItem("Fenster öffnen", call(self.show), default=True),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Lüfter", pystray.Menu(fan_items)),
-            pystray.MenuItem("Leistung (BIOS)", pystray.Menu(bios_items)),
             pystray.MenuItem("Lüftersteuerung an", call(self.toggle_control),
                              checked=lambda _i: read_override()["mode"] != "paused"),
             pystray.Menu.SEPARATOR,
@@ -868,19 +849,12 @@ class App:
         else:
             self._write(profile=value, mode="normal")
 
-    def set_bios(self, value: str) -> None:
-        self._write(bios_mode=value)
-
     def set_control(self, on: bool) -> None:
         """Hauptschalter: aus = Steuerung pausiert, das BIOS regelt."""
         self._write(mode=self._resume_mode if on else "paused")
 
     def toggle_control(self) -> None:
         self.set_control(read_override()["mode"] == "paused")
-
-    def _bios_choice(self, override: dict) -> str:
-        s = self.status if self.status and not self.status.get("stale") else {}
-        return override.get("bios_mode") or s.get("fan_mode") or "default"
 
     def edit_config(self) -> None:
         self._open(self.config_path)
@@ -1043,7 +1017,6 @@ class App:
                 "t": status["timestamp"], "cpu": status["cpu_temp"], "gpu": status["gpu_temp"],
                 "fan": self._fan_percent(status), "rpm": status.get("fan_rpm") or [],
                 "fan_label": self._fan_label(status),
-                "bios": BIOS_LABELS.get(status.get("fan_mode", ""), ""),
             })
         self._render_settings(override, status if running else None)
         self._render(status, running)
@@ -1086,13 +1059,6 @@ class App:
             if choice == "auto" and s:
                 hint = hint.rstrip(".") + f" – gerade {profile_label(s['profile'])}."
         self.fan_hint.config(text=hint)
-
-        bios = self._bios_choice(override)
-        self.bios_seg.set(bios, enabled=active)
-        if not active:
-            self.bios_hint.config(text="Bei ausgeschalteter Lüftersteuerung gilt der BIOS-Standard.")
-        else:
-            self.bios_hint.config(text=BIOS_HINTS.get(bios, ""))
 
     def _set_state(self, text: str, color: str) -> None:
         self.state_dot.config(fg=color)

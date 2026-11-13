@@ -63,9 +63,10 @@ DEFAULTS: dict = {
         # "level" = stufenlose Drehzahl, "toggle" = nur Max an/aus (Notlösung,
         # falls ein BIOS feste Drehzahlen ignoriert).
         "mode": "level",
-        # BIOS-Leistungsmodus, der beim Start gesetzt wird: "default", "cool"
-        # oder "performance". Das BIOS setzt feste Drehzahlen erst um, nachdem
-        # ein Leistungsmodus gesetzt wurde - "default" ändert die Leistung nicht.
+        # BIOS-Modus, der beim Start gesetzt wird: "default", "cool" oder
+        # "performance". Das BIOS setzt feste Drehzahlen erst um, nachdem ein
+        # Modus gesetzt wurde. "default" genügt; die anderen bringen auf dem
+        # Victus keine messbare Mehrleistung.
         "fan_mode": "default",
         # Quelle der CPU-Temperatur: "auto" (HP-BIOS, sonst wärmste ACPI-Zone)
         # oder eine id aus "victus-fan sensors", z. B. "perf:\\_TZ.THRM".

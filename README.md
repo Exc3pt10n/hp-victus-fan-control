@@ -43,7 +43,7 @@ Beim Überfahren zeigt es CPU- und GPU-Temperatur sowie die **tatsächliche Dreh
 Das Fenster zeigt Temperaturen und die gemessenen Lüfterdrehzahlen (der Balken zeigt die Drehzahl,
 der Strich darin das Ziel der Steuerung), den Verlauf der letzten 10 Minuten und die Einstellungen.
 Fährt man mit der Maus über den Verlauf, zeigt er für den Zeitpunkt Temperaturen, Lüfterdrehzahl
-sowie das aktive Lüfterprofil und den Leistungsmodus; gestrichelte Linien markieren Wechsel.
+sowie das aktive Lüfterprofil; gestrichelte Linien markieren einen Profilwechsel.
 Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktionen
 (Einstellungen, Protokoll, Updates, Hardware-Test, Sensoren, Dienst neu starten, Autostart)
 liegen unter **Extras**.
@@ -67,7 +67,7 @@ automatisch; „Kopieren“ legt die angezeigten Zeilen in die Zwischenablage.
 Schließen (✕) blendet das Fenster nur aus.
 
 Oben rechts schaltet der Schalter **Steuerung an/aus** die Lüftersteuerung ein oder aus. Aus heißt:
-Das BIOS regelt die Lüfter wie ab Werk. Darunter gibt es zwei Einstellungen:
+Das BIOS regelt die Lüfter wie ab Werk. Darunter wählst du, wie die Lüfter arbeiten:
 
 **Lüfter** – eine Skala von leise bis voll:
 
@@ -79,10 +79,11 @@ Das BIOS regelt die Lüfter wie ab Werk. Darunter gibt es zwei Einstellungen:
 | **Stark** | Mindestens 30 %, steigt früher und steiler – für Spiele und Rendering |
 | **Maximum** | Beide Lüfter dauerhaft mit voller Drehzahl (≈ 5400 U/min) |
 
-**Leistung (BIOS)** – derselbe Leistungsmodus wie im OMEN Gaming Hub: **Standard**, **Kühl**
-(laut HP weniger Leistung, kühleres Gehäuse) und **Performance** (laut HP mehr Leistung).
-Was die Leistung wirklich bestimmt, ist die **Stromversorgung**: Am HP-Netzteil
-darf die CPU dauerhaft 54 W aufnehmen (65 W im Boost), an einer USB-C-Dockingstation nur 35 W.
+Einen Umschalter für die BIOS-Leistungsmodi (Standard/Kühl/Performance wie im OMEN Gaming Hub)
+gibt es bewusst nicht: Messungen mit CPU-Z und 3DMark zeigten in allen Modi dieselben
+Leistungsgrenzen (CPU 65 W, GPU 60–80 W) und dieselben Ergebnisse. Was die Leistung wirklich
+bestimmt, ist die **Stromversorgung**: Am HP-Netzteil darf die CPU bis 65 W aufnehmen,
+an einer USB-C-Dockingstation nur 35 W.
 
 Die Oberfläche läuft mit normalen Benutzerrechten; nur der Hintergrunddienst spricht mit
 der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
@@ -166,7 +167,6 @@ victus-fan status
 |---|---|
 | `victus-fan profile auto\|quiet\|balanced\|performance` | Lüfter: Automatisch, Leise, Ausgewogen, Stark |
 | `victus-fan mode normal\|max\|paused` | Lüfter auf Maximum (`max`), Steuerung aus (`paused`) bzw. wieder an (`normal`) |
-| `victus-fan power auto\|default\|cool\|performance` | Leistung (BIOS); `auto` = Wert aus der Konfiguration |
 | `victus-fan curve balanced` | Lüfterkurve eines Profils anzeigen |
 | `victus-fan selftest --apply` | Hardware-Test (Administrator) |
 | `victus-fan sensors --apply` | Temperaturquellen vergleichen (Administrator) |

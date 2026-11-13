@@ -13,7 +13,7 @@ from .backends import BackendError, FanBackend
 from .config import Config, load_config
 from .controller import FanController, Reading, ToggleAdapter
 from .power_events import DISPLAY_OFF, DISPLAY_ON, RESUME, SUSPEND, PowerEvents
-from .state import BIOS_MODES, DEFAULT_OVERRIDE, read_override
+from .state import DEFAULT_OVERRIDE, read_override
 
 log = logging.getLogger(__name__)
 
@@ -184,11 +184,6 @@ class FanService:
         reading = Reading(_round(b.read_cpu_temp()), _round(b.read_gpu_temp()), on_battery)
         override = self._override()
         mode = override["mode"]
-        if mode != "paused" and not self._paused:
-            wanted = self.effective_windows(override).get("fan_mode") or ""
-            if wanted != self._applied_fan_mode:
-                log.info("BIOS-Leistungsmodus -> %s", wanted)
-                self._apply_backend_settings(override)
         name, reason = self.active_profile_name(on_battery, override)
         profile = self.config.profile(name)
 
@@ -222,7 +217,6 @@ class FanService:
             "mode": mode,
             "supports_level": b.supports_level,
             "fan_mode": "" if mode == "paused" else self._applied_fan_mode,
-            "bios_mode": override["bios_mode"],
             "backend": b.name,
             "profile": name,
             "profile_reason": reason,
@@ -287,19 +281,13 @@ class FanService:
         self.backend.rearm()
         self._last_sent = None       # Drehzahl sofort neu senden
 
-    def effective_windows(self, override: dict) -> dict:
-        """[windows]-Einstellungen mit dem in der Oberfläche gewählten Leistungsmodus."""
-        settings = dict(self.config.windows)
-        if override.get("bios_mode") in BIOS_MODES:
-            settings["fan_mode"] = override["bios_mode"]
-        return settings
-
-    def _apply_backend_settings(self, override: dict | None = None) -> None:
-        """[windows]-Einstellungen (u. a. BIOS-Leistungsmodus) an das Backend geben
-        - nach einer Konfig-Änderung, einem Moduswechsel und beim Fortsetzen."""
+    def _apply_backend_settings(self) -> None:
+        """[windows]-Einstellungen an das Backend geben - beim Start, nach einer
+        Konfig-Änderung und beim Fortsetzen. Der BIOS-Modus aus "fan_mode" schaltet
+        die Drehzahlvorgabe frei; er ist keine Leistungseinstellung."""
         if self.dry_run:
             return
-        settings = self.effective_windows(override if override is not None else self._override())
+        settings = dict(self.config.windows)
         self.backend.reconfigure(settings)
         self._applied_fan_mode = settings.get("fan_mode") or ""
         self._last_sent = None      # Drehzahl neu senden

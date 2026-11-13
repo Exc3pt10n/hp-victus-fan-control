@@ -222,30 +222,14 @@ class FanModeTest(unittest.TestCase):
         self.b.reconfigure = lambda settings: self.b.applied.append(settings.get("fan_mode"))
         self.s = FanService(Config(), self.b, override_file=self.override)
 
-    def test_bios_mode_choice_is_applied(self):
-        self.override.write_text(json.dumps({"bios_mode": "performance"}))
-        status = self.s.step()
-        self.assertEqual(self.b.applied, ["performance"])
-        self.assertEqual(status["fan_mode"], "performance")
-        self.s.step()
-        self.assertEqual(self.b.applied, ["performance"])   # nur bei Änderung
-        self.override.write_text(json.dumps({"bios_mode": ""}))   # zurück zur Konfiguration
-        status = self.s.step()
-        self.assertEqual(self.b.applied, ["performance", "default"])
-        self.assertEqual(status["fan_mode"], "default")
-
-    def test_bios_mode_restored_after_pause(self):
-        self.override.write_text(json.dumps({"bios_mode": "cool", "mode": "paused"}))
-        self.s.step()
-        self.override.write_text(json.dumps({"bios_mode": "cool", "mode": "normal"}))
-        self.s.step()
-        self.assertEqual(self.b.applied[-1], "cool")
-
-    def test_old_power_mode_choice_is_ignored(self):
-        self.override.write_text(json.dumps({"power_mode": "performance"}))   # aus Version 2.1
-        status = self.s.step()
-        self.assertEqual(self.b.applied, [])            # nichts umgestellt
-        self.assertEqual(status["fan_mode"], "default")
+    def test_old_power_mode_choices_are_ignored(self):
+        # "power_mode" aus Version 2.1, "bios_mode" aus Version 2.7
+        for key in ("power_mode", "bios_mode"):
+            self.override.write_text(json.dumps({key: "performance"}))
+            status = self.s.step()
+            self.assertEqual(self.b.applied, [])            # nichts umgestellt
+            self.assertEqual(status["fan_mode"], "default")
+            self.assertNotIn("bios_mode", status)
 
     def test_resume_after_pause_sets_mode_again(self):
         self.override.write_text(json.dumps({"mode": "paused"}))
