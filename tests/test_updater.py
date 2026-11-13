@@ -88,7 +88,7 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual(status["latest_sha"], "c" * 40)
 
     def test_source_never_comes_from_config(self):
-        # Die config.toml dürfen normale Benutzer bearbeiten - der als SYSTEM laufende
+        # Die Einstellungen dürfen normale Benutzer schreiben - der als SYSTEM laufende
         # Updater darf daraus weder Repository noch Branch übernehmen.
         self.installed("2.3.0", sha="b" * 40)
         urls = []

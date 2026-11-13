@@ -100,21 +100,21 @@ class ServiceTest(unittest.TestCase):
     def test_config_reload(self):
         import os
         with tempfile.TemporaryDirectory() as d:
-            cfg_path = Path(d) / "config.toml"
-            cfg_path.write_text("[general]\ncritical_temp = 92.0\n")
+            cfg_path = Path(d) / "settings.json"
+            cfg_path.write_text('{"general": {"critical_temp": 92.0}}')
             s = FanService(load_config(cfg_path), FakeBackend())
-            cfg_path.write_text("[general]\ncritical_temp = 80.0\n")
+            cfg_path.write_text('{"general": {"critical_temp": 80.0}}')
             os.utime(cfg_path, (1, 1))
             s.step()
             self.assertEqual(s.controller.critical_temp, 80.0)
-            cfg_path.write_text("[general]\nprofile = 'gibtsnicht'\n")
+            cfg_path.write_text('{"general": {"profile": "gibtsnicht"}}')
             os.utime(cfg_path, (2, 2))
-            status = s.step()  # fehlerhafte Konfiguration -> alte bleibt, Hinweis im Status
+            status = s.step()  # beschädigte Einstellungen -> bisherige bleiben, Hinweis im Status
             self.assertEqual(s.controller.critical_temp, 80.0)
             self.assertIn("gibtsnicht", status["config_error"])
-            cfg_path.write_text("[general]\ncritical_temp = 85.0\n")
+            cfg_path.write_text('{"general": {"critical_temp": 85.0}}')
             os.utime(cfg_path, (3, 3))
-            status = s.step()  # korrigiert -> übernommen, Hinweis weg
+            status = s.step()  # neu gespeichert -> übernommen, Hinweis weg
             self.assertEqual(s.controller.critical_temp, 85.0)
             self.assertIsNone(status["config_error"])
 
@@ -141,21 +141,6 @@ class EffectTest(unittest.TestCase):
     def test_no_warning_when_fans_follow(self):
         status = self._run(self._service([2475, 2565]), 80)
         self.assertIsNone(status["warning"])
-
-
-class ConfigUpdateTest(unittest.TestCase):
-    def test_update_keeps_comments_and_adds_keys(self):
-        from victus_fan.config import update_config_values
-        with tempfile.TemporaryDirectory() as d:
-            p = Path(d) / "config.toml"
-            p.write_text(Path("config.example.toml").read_text(encoding="utf-8"), encoding="utf-8")
-            update_config_values(p, "windows", {"mode": "toggle", "max_level_cpu": 49}, note="Test")
-            cfg = load_config(p)
-            self.assertEqual(cfg.windows["mode"], "toggle")
-            self.assertEqual(cfg.windows["max_level_cpu"], 49)
-            self.assertIn("# Eigene Profile", p.read_text(encoding="utf-8"))
-            update_config_values(p, "neu", {"x": 1})
-            self.assertIn("[neu]", p.read_text(encoding="utf-8"))
 
 
 class RearmTest(unittest.TestCase):

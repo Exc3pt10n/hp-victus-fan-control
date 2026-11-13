@@ -1,9 +1,9 @@
-"""Einstellungsfenster: bearbeitet die config.toml, ohne dass man sie öffnen muss.
+"""Einstellungsfenster: der einzige Weg, die Einstellungen zu ändern.
 
-Geändert werden nur Werte, die sich wirklich geändert haben; Kommentare und
-alles andere in der Datei bleiben erhalten. ``save_settings`` prüft die
-Änderung vorab in einer Kopie. Der Dienst übernimmt die neue Konfiguration
-automatisch innerhalb weniger Sekunden.
+Übergeben werden nur Werte, die sich wirklich geändert haben; ``save_settings``
+prüft sie und speichert in settings.json. Der Dienst übernimmt die neuen
+Einstellungen automatisch innerhalb weniger Sekunden. Die Messwerte von
+Hardware- und Sensor-Test stellen nur die Tests selbst ein.
 """
 
 from __future__ import annotations
@@ -12,8 +12,8 @@ import copy
 import tkinter as tk
 from tkinter import messagebox
 
-from .ui import system, texts, theme, widgets
-from .config import DEFAULTS, DEFAULT_PROFILES, MAX_CRITICAL_TEMP, load_config, save_settings
+from .ui import texts, theme, widgets
+from .config import DEFAULTS, DEFAULT_PROFILES, MAX_CRITICAL_TEMP, Config, load_config, reset_settings, save_settings
 
 T_MIN, T_MAX = 30, 100
 
@@ -165,10 +165,10 @@ class SettingsDialog:
         try:
             self.cfg = load_config(self.path)
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Einstellungen", f"Die Konfiguration ist fehlerhaft:\n{exc}\n\n"
-                                                  "Bitte als Textdatei öffnen und korrigieren.")
-            system.open_file(self.path)
-            raise
+            messagebox.showwarning("Einstellungen", f"Die gespeicherten Einstellungen sind beschädigt:\n{exc}\n\n"
+                                                    "Angezeigt werden die Standardwerte – „Speichern“ ersetzt "
+                                                    "die beschädigten Einstellungen.")
+            self.cfg = Config(path=self.path)
         raw = self.cfg.raw
         self.profiles = [n for n in raw["profiles"]]
         self.curves = {n: {"cpu": [list(p) for p in self.cfg.profile(n).cpu_curve],
@@ -200,10 +200,7 @@ class SettingsDialog:
 
         foot = tk.Frame(outer, bg=C.BG)
         foot.pack(fill="x", pady=(12, 0))
-        link = tk.Label(foot, text="Als Textdatei öffnen", bg=C.BG, fg=theme.ACCENT, cursor="hand2",
-                        font=(theme.FONT, 8, "underline"))
-        link.pack(side="left")
-        link.bind("<Button-1>", lambda _e: self.app._open(self.path))
+        self._button(foot, "Alles zurücksetzen", self.reset_all).pack(side="left")
         self._button(foot, "Speichern", self.save, primary=True).pack(side="right")
         self._button(foot, "Abbrechen", self.close).pack(side="right", padx=(0, 8))
 
@@ -282,6 +279,11 @@ class SettingsDialog:
         spin, self.critical_var = self._spin(row, g["critical_temp"], 70, MAX_CRITICAL_TEMP, 1)
         spin.pack(side="left")
         tk.Label(row, text="°C", bg=theme.C.CARD, fg=theme.C.MUTED, font=(theme.FONT, 9)).pack(side="left", padx=(6, 0))
+        box = self._section(page, "Protokoll")
+        self.log_box, self.verbose_log = self._check(
+            box, "Ausführliches Protokoll (jede Messung, nur zur Fehlersuche)",
+            str(g.get("log_level", "INFO")).upper() == "DEBUG")
+        self.log_box.pack(anchor="w", pady=(4, 14))
         return page
 
     def _page_curves(self):
@@ -396,6 +398,7 @@ class SettingsDialog:
         put("general", "critical_temp", self._read(self.critical_var, 70, MAX_CRITICAL_TEMP, "Notfall-Temperatur"))
         for key, (section, var, lo, hi, label) in self.control_vars.items():
             put(section, key, self._read(var, lo, hi, label))
+        put("general", "log_level", "DEBUG" if self.verbose_log.get() else "INFO")
         put("update", "enabled", bool(self.upd_enabled.get()))
         put("update", "check_only", bool(self.upd_check_only.get()))
         for name in self.profiles:
@@ -416,6 +419,21 @@ class SettingsDialog:
             raise ValueError(f"{label}: erlaubt sind {_num(lo)} bis {_num(hi)}")
         return float(value)
 
+    def reset_all(self) -> None:
+        if not messagebox.askokcancel(
+                "Alles zurücksetzen",
+                "Alle Einstellungen und Lüfterkurven auf die Standardwerte zurücksetzen?\n\n"
+                "Die Messwerte von Hardware- und Sensor-Test bleiben erhalten.", parent=self.win):
+            return
+        try:
+            reset_settings(self.path)
+        except OSError as exc:
+            messagebox.showerror("Einstellungen", f"Konnte die Einstellungen nicht speichern:\n{exc}",
+                                 parent=self.win)
+            return
+        self.app._fill_profiles()
+        self.close()
+
     def save(self) -> None:
         try:
             changes = self._collect()
@@ -425,7 +443,7 @@ class SettingsDialog:
             messagebox.showerror("Einstellungen", str(exc), parent=self.win)
             return
         except OSError as exc:
-            messagebox.showerror("Einstellungen", f"Konnte die Konfiguration nicht speichern:\n{exc}",
+            messagebox.showerror("Einstellungen", f"Konnte die Einstellungen nicht speichern:\n{exc}",
                                  parent=self.win)
             return
         self.app._fill_profiles()

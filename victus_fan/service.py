@@ -55,7 +55,7 @@ class FanService:
         self.toggle = ToggleAdapter(float(config.toggle["engage_percent"]),
                                     float(config.toggle["release_percent"]),
                                     float(config.toggle["min_on_time"]))
-        # Fehler in der config.toml: Text für die Oberfläche (None = alles in Ordnung)
+        # Beschädigte Einstellungen: Text für die Oberfläche (None = alles in Ordnung)
         self.config_error: str | None = None
         self.stop_event = threading.Event()
         self._last_sent: tuple | None = None
@@ -76,7 +76,7 @@ class FanService:
             return None
 
     def reload_config_if_changed(self) -> None:
-        """Übernimmt Änderungen an der config.toml ohne Neustart."""
+        """Übernimmt geänderte Einstellungen (settings.json) ohne Neustart."""
         mtime = self._mtime()
         if mtime is None or mtime == self._config_mtime:
             return
@@ -84,7 +84,7 @@ class FanService:
         try:
             new = load_config(self.config.path)
         except Exception as exc:  # noqa: BLE001
-            log.error("Konfiguration fehlerhaft, behalte die alte: %s", exc)
+            log.error("Einstellungen beschädigt, behalte die bisherigen: %s", exc)
             self.config_error = f"{exc} – es gelten weiter die bisherigen Einstellungen."
             return
         # load_config hat alle Werte geprüft; trotzdem erst Regler und Toggle
@@ -95,16 +95,18 @@ class FanService:
             self.toggle.configure(float(new.toggle["engage_percent"]), float(new.toggle["release_percent"]),
                                   float(new.toggle["min_on_time"]))
         except (KeyError, TypeError, ValueError) as exc:
-            log.error("Konfiguration nicht übernehmbar, behalte die alte: %s", exc)
+            log.error("Einstellungen nicht übernehmbar, behalte die bisherigen: %s", exc)
             self.controller.configure(self.config.control, self.config.general["critical_temp"])
             self.config_error = f"{exc} – es gelten weiter die bisherigen Einstellungen."
             return
         self.config_error = None
-        old_windows = self.config.windows
+        old_windows, old_level = self.config.windows, self.config.general["log_level"]
         self.config = new
         if new.windows != old_windows:
             self._apply_backend_settings()
-        log.info("Konfiguration neu geladen")
+        if new.general["log_level"] != old_level:      # "Ausführliches Protokoll" ohne Neustart
+            logging.getLogger().setLevel(getattr(logging, str(new.general["log_level"]).upper(), logging.INFO))
+        log.info("Einstellungen neu geladen")
 
     def _override(self) -> dict:
         return read_override(self.override_file) if self.override_file else dict(DEFAULT_OVERRIDE)

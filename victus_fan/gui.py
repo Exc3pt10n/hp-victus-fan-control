@@ -23,7 +23,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from . import __version__, autostart, paths
-from .config import load_config
+from .config import HARDWARE_TEST_VERSION, PROFILE_NAMES, load_config
 from .state import read_override, read_status, write_override
 from .ui.icons import make_fan_image, make_tray_image
 from .ui.system import (SingleInstance, open_file, restart_service, run_elevated_console,
@@ -47,7 +47,8 @@ class App:
     def __init__(self, show: bool, config_path: str | None, instance: SingleInstance):
         apply_theme(windows_uses_dark_mode())
 
-        self.config_path = Path(config_path) if config_path else paths.CONFIG_FILE
+        self.config_path = Path(config_path) if config_path else paths.SETTINGS_FILE
+        self._hw_check: tuple[float | None, bool] = (None, False)   # (mtime, Hardware-Test nötig?)
         self.instance = instance
         self.history: deque = deque(maxlen=HISTORY_SECONDS // 2 + 10)
         self.last_ts = None
@@ -87,11 +88,7 @@ class App:
 
     # ---- Aufbau -----------------------------------------------------------
     def _profiles(self) -> list[str]:
-        try:
-            names = list(load_config(self.config_path).raw["profiles"])
-        except Exception:  # noqa: BLE001 - kaputte Konfiguration: Standardprofile zeigen
-            names = ["quiet", "balanced", "performance"]
-        return ["auto"] + names
+        return ["auto"] + list(PROFILE_NAMES)
 
     def _label(self, parent, text, size=9, color=None, bold=False, bg=None, **kw):
         return tk.Label(parent, text=text, bg=bg or C.BG, fg=color or C.TEXT,
@@ -125,7 +122,7 @@ class App:
         self.banner_text = tk.Label(self.banner, text="", bg=C.BANNER_BG, fg=C.BANNER_FG, font=(FONT, 9),
                                     justify="left", anchor="w", wraplength=420)
         self.banner_text.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        # Aktion passend zum Hinweis (Hardware-Test bzw. Konfiguration öffnen)
+        # Aktion passend zum Hinweis (Hardware-Test bzw. Einstellungen öffnen)
         self.banner_action = tk.Label(self.banner, text="", bg=C.BANNER_BG, fg=C.BANNER_FG, cursor="hand2",
                                       font=(FONT, 9, "underline"))
         self.banner_action.pack(side="right", padx=10)
@@ -473,7 +470,7 @@ class App:
         if not active:
             hint = PAUSED_HINT
         else:
-            hint = FAN_HINTS.get(choice, "Eigenes Profil aus der Konfiguration.")
+            hint = FAN_HINTS.get(choice, "")
             if choice == "auto" and s:
                 hint = hint.rstrip(".") + f" – gerade {profile_label(s['profile'])}."
         self.fan_hint.config(text=hint)
@@ -481,6 +478,21 @@ class App:
     def _set_state(self, text: str, color: str) -> None:
         self.state_dot.config(fg=color)
         self.state_text.config(text=text, fg=C.TEXT if color != OFF else C.MUTED)
+
+    def _hardware_test_needed(self) -> bool:
+        """Fehlt der Hardware-Test (oder stammt er von einem älteren Messverfahren)?
+        Die Einstellungen werden nur neu gelesen, wenn sie sich geändert haben."""
+        try:
+            mtime = self.config_path.stat().st_mtime
+        except OSError:
+            mtime = 0.0                     # noch keine Einstellungen gespeichert
+        if mtime != self._hw_check[0]:
+            try:
+                needed = load_config(self.config_path).windows["hardware_test"] < HARDWARE_TEST_VERSION
+            except Exception:  # noqa: BLE001 - beschädigte Einstellungen meldet der Dienst selbst
+                needed = False
+            self._hw_check = (mtime, needed)
+        return self._hw_check[1]
 
     def _show_banner(self, text: str | None, action: str = "", command=None) -> None:
         if text:
@@ -519,8 +531,12 @@ class App:
         if s.get("warning"):
             self._show_banner(s["warning"], "Hardware-Test", self.selftest)
         elif s.get("config_error"):
-            self._show_banner(f"Konfiguration fehlerhaft: {s['config_error']}", "Konfiguration öffnen",
-                              lambda: self._open(self.config_path))
+            self._show_banner(f"Einstellungen beschädigt: {s['config_error']}", "Einstellungen",
+                              self.open_settings)
+        elif self._hardware_test_needed():
+            self._show_banner("Der Hardware-Test wurde noch nicht ausgeführt. Er prüft in etwa 1,5 Minuten, "
+                              "welche Lüfterbefehle dein Notebook umsetzt. Optional danach: Extras ▸ "
+                              "„Temperatursensoren testen“.", "Hardware-Test", self.selftest)
         else:
             self._show_banner(None)
 

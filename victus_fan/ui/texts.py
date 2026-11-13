@@ -52,7 +52,7 @@ def tray_tooltip(s: dict | None, running: bool) -> str:
     elif s.get("warning"):
         lines.append("⚠ Lüfter folgen nicht")
     elif s.get("config_error"):
-        lines.append("⚠ Konfiguration fehlerhaft")
+        lines.append("⚠ Einstellungen beschädigt")
     else:
         lines.append(f"{profile_label(s.get('profile', ''))} · Vorgabe {s.get('fan_percent', 0):.0f} %")
     return "\n".join(["Victus Lüftersteuerung"] + lines)[:127]

@@ -27,7 +27,7 @@ Autostart*. Die Lüftersteuerung selbst läuft davon unabhängig immer ab dem Sy
 
 **Entfernen:** *Einstellungen ▸ Apps ▸ Installierte Apps ▸ Victus Lüftersteuerung ▸ Deinstallieren*
 (oder `install\windows\uninstall.cmd`). Das entfernt Dienst, Tray-Icon, Autostart, Updater,
-Konfiguration und Logs und gibt die Lüfter sofort an das BIOS zurück.
+Einstellungen und Logs und gibt die Lüfter sofort an das BIOS zurück.
 
 ## Bedienung
 
@@ -48,18 +48,21 @@ Es folgt dem hellen oder dunklen Design von Windows. Seltener gebrauchte Funktio
 (Einstellungen, Protokoll, Updates, Hardware-Test, Sensoren, Dienst neu starten, Autostart)
 liegen unter **Extras**.
 
-**Extras ▸ Einstellungen …** ändert die Konfiguration ohne Texteditor:
+**Extras ▸ Einstellungen …** ist der einzige Ort für Einstellungen – eine Textdatei zum Bearbeiten
+gibt es bewusst nicht:
 
 | Reiter | Inhalt |
 |---|---|
-| **Allgemein** | Profil bei „Automatisch“ am Netzteil bzw. im Akkubetrieb, Notfall-Temperatur für volle Drehzahl |
+| **Allgemein** | Profil bei „Automatisch“ am Netzteil bzw. im Akkubetrieb, Notfall-Temperatur für volle Drehzahl, ausführliches Protokoll |
 | **Lüfterkurven** | Kurven für CPU und GPU je Profil – Punkte mit der Maus verschieben, „Standard“ setzt zurück |
 | **Regelung** | Hysterese, Verzögerung und Tempo beim Hoch-/Herunterregeln, Anlaufdrehzahl, Messintervall |
 | **Updates** | automatisch installieren oder nur anzeigen |
 
-Gespeichert werden nur geänderte Werte; die Datei wird vorher geprüft, Kommentare bleiben erhalten,
-und die Lüftersteuerung übernimmt die Änderung sofort. „Als Textdatei öffnen“ zeigt die
-`config.toml` für alle weiteren Einstellungen.
+Jede Änderung wird vor dem Speichern geprüft, und die Lüftersteuerung übernimmt sie sofort.
+**Alles zurücksetzen** stellt alle Einstellungen und Kurven auf den Standard – die Messwerte von
+Hardware- und Sensor-Test bleiben dabei erhalten. Diese Messwerte (Maximaldrehzahlen, Ansteuerung,
+Temperaturquelle) stellen nur die beiden Tests ein; Werte, die am Gerät gemessen und technisch
+bedingt sind (z. B. wie oft die Drehzahl erneut gesendet wird), stehen fest im Programm.
 
 **Extras ▸ Protokoll …** zeigt das Log der Lüftersteuerung und der Updates lesbar an: Warnungen
 orange, Fehler rot, filterbar („Warnungen & Fehler“) und durchsuchbar. Neue Einträge erscheinen
@@ -97,10 +100,10 @@ der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
   dann sanft mit 3 %/s.
 - **Sicherheit:** Ab 92 °C oder ohne Sensordaten sofort volle Drehzahl. Fest eingebaut und nicht
   abschaltbar: Die Notfall-Temperatur lässt sich höchstens auf 95 °C stellen, und ab 80 °C
-  laufen die Lüfter unabhängig von der Kurve mindestens an (88 °C ≥ 60 %). Ist die Konfiguration
-  fehlerhaft, regelt der Dienst mit den bisherigen bzw. Standardwerten weiter und das Fenster
-  zeigt einen Hinweis mit „Konfiguration öffnen“; nach dem Korrigieren gilt die Datei sofort.
-  Updates funktionieren auch dann. Nach wiederholten Fehlern übernimmt wieder das BIOS; dessen
+  laufen die Lüfter unabhängig von der Kurve mindestens an (88 °C ≥ 60 %). Sind die gespeicherten
+  Einstellungen beschädigt, regelt der Dienst mit den bisherigen bzw. Standardwerten weiter, das
+  Fenster zeigt einen Hinweis, und Speichern im Einstellungsfenster repariert sie. Updates
+  funktionieren auch dann. Nach wiederholten Fehlern übernimmt wieder das BIOS; dessen
   Überhitzungsschutz bleibt immer aktiv.
 - **Grafikkarte schlafen lassen:** Schläft die NVIDIA-GPU (Optimus), wird ihre Temperatur nicht
   abgefragt – `nvidia-smi` würde sie sonst alle paar Sekunden aufwecken und Strom kosten. Das
@@ -134,8 +137,8 @@ dort und im Tray-Menü gibt es **Nach Updates suchen**.
 Installiert werden nur **freigegebene Versionen**: die Tags `vX.Y.Z` bzw. GitHub-Releases von
 [`Exc3pt10n/hp-victus-fan-control`](https://github.com/Exc3pt10n/hp-victus-fan-control), die der
 Workflow nach einem Merge in `main` anlegt. Commits ohne neue Version werden nicht verteilt,
-und auf eine ältere Version wird nie zurückgestuft. Unter `[update]` in der Konfiguration bzw. im
-Einstellungsfenster lässt sich das abschalten oder auf „nur anzeigen“ stellen.
+und auf eine ältere Version wird nie zurückgestuft. Im Einstellungsfenster (Reiter Updates) lässt
+sich das abschalten oder auf „nur anzeigen“ stellen.
 
 Zum Testen kann der Updater stattdessen jedem Commit eines Branches folgen – das geht bewusst nur
 als Administrator, weil der Updater mit SYSTEM-Rechten läuft:
@@ -147,19 +150,28 @@ victus-fan update --branch release
 
 (`release` = wieder nur freigegebene Versionen.)
 
+Deine Einstellungen bleiben bei Updates erhalten. Hardware- und Sensor-Test musst du danach nicht
+wiederholen; das Fenster bittet nur darum, wenn der Hardware-Test noch nie lief oder eine neue
+Version anders misst.
+
+Bis Version 2.8 gab es stattdessen eine Textdatei `config.toml`. Das Update übernimmt sie
+einmalig: eigene Werte, angepasste Kurven der drei Profile und die Messwerte der Tests bleiben;
+feste, veraltete und ungültige Einträge sowie eigene Profile entfallen. Die alte Datei liegt danach
+als `config.toml.bak` im Datenordner.
+
 Ein Update wird erst vollständig heruntergeladen und danach lokal installiert und geprüft.
 Bricht es ab, bleibt die bisherige Version erhalten bzw. wird aus ihren aufgehobenen Paketen
 wiederhergestellt.
 
 > **Wichtig:** Updates laufen mit SYSTEM-Rechten und installieren, was als Version getaggt wird.
-> Die Quelle steht deshalb fest im Programm (nicht in der für Benutzer bearbeitbaren
-> Konfiguration). Schütze dein GitHub-Konto mit Zwei-Faktor-Anmeldung und halte den
+> Die Quelle steht deshalb fest im Programm (nicht in den Einstellungen, die normale Benutzer
+> ändern dürfen). Schütze dein GitHub-Konto mit Zwei-Faktor-Anmeldung und halte den
 > Schreibzugriff auf das Repository auf dich beschränkt.
 
 ## Tests bei Problemen
 
 Beide Tests findest du im Tray-Menü; sie fragen nach Administratorrechten und übernehmen ihr
-Ergebnis automatisch in die Konfiguration. Bei Problemen bitte die Zeile **„Rohdaten“** am
+Ergebnis automatisch in die Einstellungen. Bei Problemen bitte die Zeile **„Rohdaten“** am
 Ende der Ausgabe schicken.
 
 - **Hardware-Test** (≈ 1,5 Minuten): misst, ob Max-Lüfter und feste Drehzahlen wirklich
@@ -172,7 +184,8 @@ Ende der Ausgabe schicken.
 
 | Datei in `C:\ProgramData\VictusFan` | Inhalt |
 |---|---|
-| `config.toml` | Konfiguration – am einfachsten über Extras ▸ Einstellungen; Änderungen gelten sofort ([Beispiel](config.example.toml)) |
+| `settings.json` | Einstellungen – nur über Extras ▸ Einstellungen und die beiden Tests ändern |
+| `config.toml.bak` | Textkonfiguration bis Version 2.8 (nach der Übernahme aufgehoben) |
 | `victus-fan.log` | Log der Lüftersteuerung |
 | `update.log`, `update-install.log` | Log der Updates |
 
@@ -205,11 +218,11 @@ python -m unittest
 ```
 
 ```bash
-python -m victus_fan -c config.example.toml run --backend simulate -v
+python -m victus_fan -c settings-test.json run --backend simulate -v
 ```
 
-**Versionen:** Die Version steht in `pyproject.toml` und `victus_fan/__init__.py` (ein Test
-prüft, dass beide gleich sind). Nach jedem Merge nach `main` laufen die Tests; ist die Version
+**Versionen:** Die Version steht nur in `victus_fan/__init__.py` (`pyproject.toml` liest sie
+von dort). Nach jedem Merge nach `main` laufen die Tests; ist die Version
 neu, legt der Workflow [`release.yml`](.github/workflows/release.yml) den Tag `v<Version>` und ein
 GitHub-Release mit automatischen Änderungsnotizen an. Ohne Versionssprung wird nichts getaggt.
 
@@ -225,6 +238,8 @@ GitHub-Release mit automatischen Änderungsnotizen an. Ohne Versionssprung wird 
 | `log_window.py`, `logparse.py` | Protokollfenster bzw. Zerlegen der Logzeilen |
 | `selftest.py`, `sensors.py` | Hardware-Test und Sensor-Test |
 | `updater.py` | Auto-Update über GitHub (Quelle fest im Code, siehe unten) |
+| `config.py` | Standardwerte, feste Werte, Prüfung und Speichern der Einstellungen (`settings.json`) |
+| `migrate.py` | Einmalige Übernahme der `config.toml` älterer Versionen |
 | `state.py` | Austausch zwischen Dienst und Oberfläche (`status.json`, `override.json`) |
 
 Lizenz: MIT

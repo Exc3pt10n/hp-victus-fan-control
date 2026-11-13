@@ -12,7 +12,7 @@ Ablauf (läuft als geplante Aufgabe "VictusFanUpdate" mit SYSTEM-Rechten):
    ausführen (install.ps1 -Unattended)
 
 Sicherheit: Weil der Updater als SYSTEM fremden Code ausführt, kommen Quelle
-(``REPO``) und Test-Branch nie aus der config.toml - die dürfen normale
+(``REPO``) und Test-Branch nie aus den Einstellungen - die dürfen normale
 Benutzer bearbeiten. Das Repository steht fest im Code, der Test-Branch in
 einer Datei im Programmordner (nur Administratoren).
 
