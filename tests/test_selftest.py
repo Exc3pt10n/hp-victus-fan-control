@@ -108,5 +108,23 @@ class SelftestTest(unittest.TestCase):
         self.assertEqual(r.recommendation["mode"], "level")
 
 
+
+class RecommendationTest(unittest.TestCase):
+    def test_implausible_measurements_are_not_recommended(self):
+        from victus_fan.config import Config, validate
+        from victus_fan.selftest import Result, _recommend
+
+        good = Result(max_on=[5400, 5200], max_works=True, level_works=True, best_fan_mode="default")
+        self.assertEqual(_recommend(good, True)["max_level_cpu"], 54)
+        bad = Result(max_on=[100, 9900], max_works=True, level_works=True, best_fan_mode="default",
+                     level_min_test=[5000, 5000])
+        rec = _recommend(bad, True)
+        self.assertNotIn("max_level_cpu", rec)
+        self.assertEqual(rec["min_level"], 0)
+        raw = Config().raw
+        raw["windows"].update(rec)
+        validate(raw)                     # Empfehlung ergibt immer eine gültige Konfiguration
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -109,8 +109,14 @@ class ServiceTest(unittest.TestCase):
             self.assertEqual(s.controller.critical_temp, 80.0)
             cfg_path.write_text("[general]\nprofile = 'gibtsnicht'\n")
             os.utime(cfg_path, (2, 2))
-            s.step()  # fehlerhafte Konfiguration -> alte bleibt
+            status = s.step()  # fehlerhafte Konfiguration -> alte bleibt, Hinweis im Status
             self.assertEqual(s.controller.critical_temp, 80.0)
+            self.assertIn("gibtsnicht", status["config_error"])
+            cfg_path.write_text("[general]\ncritical_temp = 85.0\n")
+            os.utime(cfg_path, (3, 3))
+            status = s.step()  # korrigiert -> übernommen, Hinweis weg
+            self.assertEqual(s.controller.critical_temp, 85.0)
+            self.assertIsNone(status["config_error"])
 
 
 class EffectTest(unittest.TestCase):

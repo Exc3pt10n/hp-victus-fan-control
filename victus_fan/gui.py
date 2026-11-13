@@ -125,10 +125,12 @@ class App:
         self.banner_text = tk.Label(self.banner, text="", bg=C.BANNER_BG, fg=C.BANNER_FG, font=(FONT, 9),
                                     justify="left", anchor="w", wraplength=420)
         self.banner_text.pack(side="left", fill="x", expand=True, padx=10, pady=8)
-        b = tk.Label(self.banner, text="Hardware-Test", bg=C.BANNER_BG, fg=C.BANNER_FG, cursor="hand2",
-                     font=(FONT, 9, "underline"))
-        b.pack(side="right", padx=10)
-        b.bind("<Button-1>", lambda _e: self.selftest())
+        # Aktion passend zum Hinweis (Hardware-Test bzw. Konfiguration öffnen)
+        self.banner_action = tk.Label(self.banner, text="", bg=C.BANNER_BG, fg=C.BANNER_FG, cursor="hand2",
+                                      font=(FONT, 9, "underline"))
+        self.banner_action.pack(side="right", padx=10)
+        self._banner_command = None
+        self.banner_action.bind("<Button-1>", lambda _e: self._banner_command and self._banner_command())
         self._banner_anchor = tk.Frame(outer, bg=C.BG, height=1)
         self._banner_anchor.pack(fill="x", pady=(10, 0))
 
@@ -480,9 +482,11 @@ class App:
         self.state_dot.config(fg=color)
         self.state_text.config(text=text, fg=C.TEXT if color != OFF else C.MUTED)
 
-    def _show_banner(self, text: str | None) -> None:
+    def _show_banner(self, text: str | None, action: str = "", command=None) -> None:
         if text:
             self.banner_text.config(text=text)
+            self.banner_action.config(text=action)
+            self._banner_command = command
             if not self._warning_shown:
                 self.banner.pack(fill="x", pady=(10, 0), before=self._banner_anchor)
                 self._warning_shown = True
@@ -512,7 +516,13 @@ class App:
             self._set_state(f"Läuft · {MAX_LABEL}{battery}", WARN)
         else:
             self._set_state(f"Läuft · {profile_label(s['profile'])}{battery}", OK)
-        self._show_banner(s.get("warning"))
+        if s.get("warning"):
+            self._show_banner(s["warning"], "Hardware-Test", self.selftest)
+        elif s.get("config_error"):
+            self._show_banner(f"Konfiguration fehlerhaft: {s['config_error']}", "Konfiguration öffnen",
+                              lambda: self._open(self.config_path))
+        else:
+            self._show_banner(None)
 
         for card, key in ((self.cpu_card, "cpu_temp"), (self.gpu_card, "gpu_temp")):
             if key == "gpu_temp" and s.get("gpu_asleep"):

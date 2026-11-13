@@ -20,6 +20,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from statistics import mean
 
+from .config import NUMBER_LIMITS
 from .state import read_override, read_status, write_override
 
 MIN_DIFF_RPM = 700
@@ -180,12 +181,14 @@ def _recommend(r: Result, has_modes: bool) -> dict:
         if has_modes:
             rec["fan_mode"] = "default"
     if r.max_works and len(r.max_on) >= 2 and has_modes:
-        rec["max_level_cpu"] = max(1, r.max_on[0] // 100)
-        rec["max_level_gpu"] = max(1, r.max_on[1] // 100)
+        lo, hi = NUMBER_LIMITS["windows"]["max_level_cpu"]
+        levels = [rpm // 100 for rpm in r.max_on[:2]]
+        if all(lo <= lvl <= hi for lvl in levels):     # unplausible Messwerte nicht übernehmen
+            rec["max_level_cpu"], rec["max_level_gpu"] = levels
     if r.level_min_test:
         # Hebt das BIOS kleine Stufen an, ist das die echte Untergrenze.
         floor = max(r.level_min_test) // 100
-        rec["min_level"] = floor if floor > LOW_TEST_LEVEL + 3 else 0
+        rec["min_level"] = floor if LOW_TEST_LEVEL + 3 < floor <= NUMBER_LIMITS["windows"]["min_level"][1] else 0
     return rec
 
 

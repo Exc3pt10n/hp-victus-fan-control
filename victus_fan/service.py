@@ -55,6 +55,8 @@ class FanService:
         self.toggle = ToggleAdapter(float(config.toggle["engage_percent"]),
                                     float(config.toggle["release_percent"]),
                                     float(config.toggle["min_on_time"]))
+        # Fehler in der config.toml: Text für die Oberfläche (None = alles in Ordnung)
+        self.config_error: str | None = None
         self.stop_event = threading.Event()
         self._last_sent: tuple | None = None
         self._last_sent_at = 0.0
@@ -83,6 +85,7 @@ class FanService:
             new = load_config(self.config.path)
         except Exception as exc:  # noqa: BLE001
             log.error("Konfiguration fehlerhaft, behalte die alte: %s", exc)
+            self.config_error = f"{exc} – es gelten weiter die bisherigen Einstellungen."
             return
         # load_config hat alle Werte geprüft; trotzdem erst Regler und Toggle
         # umstellen und die neue Konfiguration erst danach übernehmen - so bleibt
@@ -94,7 +97,9 @@ class FanService:
         except (KeyError, TypeError, ValueError) as exc:
             log.error("Konfiguration nicht übernehmbar, behalte die alte: %s", exc)
             self.controller.configure(self.config.control, self.config.general["critical_temp"])
+            self.config_error = f"{exc} – es gelten weiter die bisherigen Einstellungen."
             return
+        self.config_error = None
         old_windows = self.config.windows
         self.config = new
         if new.windows != old_windows:
@@ -220,6 +225,7 @@ class FanService:
 
         status = {
             "warning": warning,
+            "config_error": self.config_error,
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "timestamp": time.time(),
             "mode": mode,

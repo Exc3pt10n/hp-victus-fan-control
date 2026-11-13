@@ -97,8 +97,10 @@ der Hardware. Beendest du das Tray-Icon, regelt der Dienst unverändert weiter.
   dann sanft mit 3 %/s.
 - **Sicherheit:** Ab 92 °C oder ohne Sensordaten sofort volle Drehzahl. Fest eingebaut und nicht
   abschaltbar: Die Notfall-Temperatur lässt sich höchstens auf 95 °C stellen, und ab 80 °C
-  laufen die Lüfter unabhängig von der Kurve mindestens an (88 °C ≥ 60 %). Ungültige Werte in der
-  Konfiguration werden abgelehnt. Nach wiederholten Fehlern übernimmt wieder das BIOS; dessen
+  laufen die Lüfter unabhängig von der Kurve mindestens an (88 °C ≥ 60 %). Ist die Konfiguration
+  fehlerhaft, regelt der Dienst mit den bisherigen bzw. Standardwerten weiter und das Fenster
+  zeigt einen Hinweis mit „Konfiguration öffnen“; nach dem Korrigieren gilt die Datei sofort.
+  Updates funktionieren auch dann. Nach wiederholten Fehlern übernimmt wieder das BIOS; dessen
   Überhitzungsschutz bleibt immer aktiv.
 - **Grafikkarte schlafen lassen:** Schläft die NVIDIA-GPU (Optimus), wird ihre Temperatur nicht
   abgefragt – `nvidia-smi` würde sie sonst alle paar Sekunden aufwecken und Strom kosten. Das

@@ -66,6 +66,8 @@ def cmd_run(args) -> int:
     backend = create_backend(args.backend or cfg.general["backend"], cfg)
     service = FanService(cfg, backend, status_file=paths.STATUS_FILE,
                          override_file=paths.OVERRIDE_FILE, dry_run=args.dry_run)
+    if error is not None:
+        service.config_error = f"{error} – es gelten die Standardwerte."
     service.install_signal_handlers()
     service.run(verbose=args.verbose)
     return 0
@@ -170,7 +172,7 @@ def cmd_restore(args) -> int:
 
 def cmd_selftest(args) -> int:
     from . import selftest
-    from .config import update_config_values
+    from .config import save_settings
 
     def finish(code: int) -> int:
         if args.wait:
@@ -200,7 +202,8 @@ def cmd_selftest(args) -> int:
     rec = result.recommendation
     if args.apply and rec.get("mode"):
         try:
-            update_config_values(args.config, "windows", rec, note="vom Hardware-Test gesetzt")
+            # Geprüft speichern: ein unplausibler Messwert darf die Datei nicht ungültig machen.
+            save_settings(args.config, {"windows": rec}, note="vom Hardware-Test gesetzt")
             print(f"\nEinstellungen in {args.config} gespeichert: {rec}")
             print("Der Dienst übernimmt sie automatisch innerhalb weniger Sekunden.")
         except Exception as exc:  # noqa: BLE001
@@ -242,7 +245,7 @@ def cmd_sensors(args) -> int:
     import json as _json
 
     from . import sensors
-    from .config import update_config_values
+    from .config import save_settings
 
     def finish(code: int) -> int:
         if args.wait:
@@ -276,9 +279,13 @@ def cmd_sensors(args) -> int:
     print(_json.dumps(results, ensure_ascii=False))
 
     if best and args.apply:
-        update_config_values(args.config, "windows", {"cpu_sensor": best["id"]},
-                             note="von 'victus-fan sensors' gewählt")
-        print(f"\nIn {args.config} als CPU-Quelle gespeichert - der Dienst übernimmt sie sofort.")
+        try:
+            save_settings(args.config, {"windows": {"cpu_sensor": best["id"]}},
+                          note="von 'victus-fan sensors' gewählt")
+            print(f"\nIn {args.config} als CPU-Quelle gespeichert - der Dienst übernimmt sie sofort.")
+        except (OSError, ValueError) as exc:
+            print(f"\nKonnte die Konfiguration nicht speichern: {exc}")
+            return finish(1)
     elif best:
         print("Übernehmen mit: victus-fan sensors --apply")
     return finish(0)
