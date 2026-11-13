@@ -176,6 +176,7 @@ class SettingsDialog:
         self.original_curves = copy.deepcopy(self.curves)
 
         self.win = tk.Toplevel(app.root)
+        ui.hide_until_placed(self.win)
         self.win.title("Einstellungen – Victus Lüftersteuerung")
         self.win.configure(bg=C.BG)
         self.win.transient(app.root)
@@ -215,6 +216,7 @@ class SettingsDialog:
         self.win.geometry(f"{width}x{height}")
         self.show_page("general")
         self._center(width, height)
+        ui.reveal(self.win)
         self.win.grab_set()
         self.win.focus_force()
 

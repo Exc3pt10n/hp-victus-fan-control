@@ -16,6 +16,8 @@ from . import paths
 from .logparse import Entry, filter_entries, parse_log, read_tail
 
 REFRESH_MS = 2000
+# Standardgröße; auf kleinen Bildschirmen wird sie begrenzt
+WIDTH, HEIGHT = 1100, 760
 
 
 class LogWindow:
@@ -29,6 +31,7 @@ class LogWindow:
         self.entries: list[Entry] = []
 
         self.win = tk.Toplevel(app.root)
+        ui.hide_until_placed(self.win)
         self.win.title("Protokoll – Victus Lüftersteuerung")
         self.win.configure(bg=C.BG)
         self.win.minsize(640, 420)
@@ -88,8 +91,9 @@ class LogWindow:
         self.count_label.pack(side="left", fill="x", expand=True)
 
         self.refresh(force=True)
-        self.win.geometry("760x520")
         self._center()
+        ui.reveal(self.win)
+        self.text.see("end")
         self._tick()
 
     # ---- Bausteine ---------------------------------------------------
@@ -100,12 +104,14 @@ class LogWindow:
                          font=(ui.FONT, 9), cursor="hand2")
 
     def _center(self) -> None:
+        """Groß und mittig auf dem Bildschirm, aber nie größer als dieser."""
         self.win.update_idletasks()
-        root = self.app.root
-        w, h = 760, 520
-        x = root.winfo_rootx() + (root.winfo_width() - w) // 2
-        y = root.winfo_rooty() + (root.winfo_height() - h) // 2
-        self.win.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+        sw, sh = self.win.winfo_screenwidth(), self.win.winfo_screenheight()
+        w = min(WIDTH, sw - 80)
+        h = min(HEIGHT, sh - 120)
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2 - 20)   # etwas nach oben, wegen der Taskleiste
+        self.win.geometry(f"{w}x{h}+{x}+{y}")
 
     # ---- Daten -------------------------------------------------------
     @property
